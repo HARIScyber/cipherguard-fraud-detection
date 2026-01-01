@@ -208,7 +208,7 @@ class CyborgDBClient:
 _cyborg_client = None
 
 
-async def get_cyborg_client(api_key: Optional[str] = None) -> CyborgDBClient:
+def get_cyborg_client(api_key: Optional[str] = None) -> CyborgDBClient:
     """
     Get or create the CyborgDB client singleton.
     
@@ -221,5 +221,6 @@ async def get_cyborg_client(api_key: Optional[str] = None) -> CyborgDBClient:
     global _cyborg_client
     if _cyborg_client is None:
         _cyborg_client = CyborgDBClient(api_key=api_key)
-        await _cyborg_client.connect()
+        # connect() is synchronous, no need to await
+        _cyborg_client.connect()
     return _cyborg_client

@@ -1,0 +1,17 @@
+apiVersion: v2
+name: cipherguard
+description: A Helm chart for CipherGuard Fraud Detection System
+type: application
+version: 4.0.0
+appVersion: "4.0.0"
+keywords:
+  - fraud-detection
+  - machine-learning
+  - microservices
+  - kafka
+home: https://github.com/cipherguard/fraud-detection
+sources:
+  - https://github.com/cipherguard/fraud-detection
+maintainers:
+  - name: CipherGuard Team
+    email: team@cipherguard.com

@@ -76,6 +76,40 @@ curl -X POST http://localhost:8001/detect \
 
 ---
 
+## 🎯 Phase 3: Advanced Ensemble Fraud Detection ✅
+
+**Latest Update:** Complete ensemble ML implementation with real-time model updates and A/B testing.
+
+### Ensemble ML Models
+- **Isolation Forest**: Unsupervised anomaly detection
+- **Random Forest**: Supervised classification with class balancing
+- **XGBoost**: Gradient boosting with optimized hyperparameters
+- **Neural Network**: Deep learning with TensorFlow/Keras
+
+### Advanced Features
+- **Multi-signal Scoring**: Combines 4 ML models + behavioral analysis + similarity
+- **Real-time Updates**: Kafka-based model retraining and hot-swapping
+- **A/B Testing**: Model versioning with performance comparison
+- **Human Insights**: Automated fraud explanations and behavioral alerts
+- **Granular Risk Levels**: 5-tier classification (CRITICAL → VERY_LOW)
+
+### Enhanced API
+```bash
+# Model-specific detection
+curl -X POST "http://localhost:8001/detect?model_version=xgboost" \
+  -H "Content-Type: application/json" \
+  -d '{"amount": 5000, "merchant": "Unknown", "device": "mobile"}'
+
+# Model management
+curl http://localhost:8001/models
+curl -X POST http://localhost:8001/set-active-model \
+  -d '{"model_version": "xgboost"}'
+```
+
+See `PHASE3_COMPLETE.md` for detailed implementation and `test_phase3_core.py` for validation.
+
+---
+
 ## 📁 Project Structure
 
 ```

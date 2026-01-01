@@ -1,20 +1,94 @@
 """
-Main FastAPI Application
-Real-time fraud detection API with encrypted vector storage
+Main FastAPI Application - Microservices Orchestrator
+Real-time fraud detection API coordinating microservices with Kafka streaming
 """
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import Dict, List, Optional
-import numpy as np
+import httpx
 import logging
 from datetime import datetime
 import os
-from sklearn.ensemble import IsolationForest
+import asyncio
+import time
+import numpy as np
 
+# Additional imports
+from sklearn.ensemble import IsolationForest
 from .feature_extraction import extract_transaction_vector
-from .cyborg_client import get_cyborg_client
-from .cyborg_shim import get_cyborg_shim
+
+logger = logging.getLogger(__name__)
+
+# Phase 4: Production Deployment imports (optional)
+try:
+    from .monitoring import get_metrics_collector, track_request, track_fraud_detection
+    from .model_optimizer import get_model_optimizer
+    PRODUCTION_FEATURES_AVAILABLE = True
+    logger.info("Production features loaded successfully")
+except ImportError as e:
+    logger.warning(f"Production features not available - running in basic mode: {e}")
+    PRODUCTION_FEATURES_AVAILABLE = False
+
+    # Mock functions for basic operation
+    def get_metrics_collector():
+        return None
+
+    def track_request(func):
+        return func
+
+    def track_fraud_detection(func):
+        return func
+
+    def get_model_optimizer():
+        return None
+
+# CyborgDB imports
+try:
+    from .cyborg_client import get_cyborg_client
+    from .cyborg_shim import cyborg_shim
+    CYBORG_AVAILABLE = True
+except ImportError:
+    logger.warning("CyborgDB not available - using mock client")
+    CYBORG_AVAILABLE = False
+    
+    def get_cyborg_client():
+        return None
+    
+    cyborg_shim = None
+
+# Phase 5: Advanced ML and Data Integration imports (optional)
+try:
+    from .advanced_models import get_advanced_detector
+    from .data_integration import get_data_pipeline, TransactionData, DataValidator
+    PHASE5_FEATURES_AVAILABLE = True
+    logger.info("Phase 5 features loaded successfully")
+except ImportError as e:
+    logger.warning(f"Phase 5 features not available - running in Phase 4 mode: {e}")
+    PHASE5_FEATURES_AVAILABLE = False
+
+    # Mock functions for Phase 4 operation
+    def get_advanced_detector():
+        return None
+
+    def get_data_pipeline():
+        return None
+
+# Initialize production components
+if PRODUCTION_FEATURES_AVAILABLE:
+    metrics_collector = get_metrics_collector()
+    model_optimizer = get_model_optimizer()
+else:
+    metrics_collector = None
+    model_optimizer = None
+
+# Initialize Phase 5 components
+if PHASE5_FEATURES_AVAILABLE:
+    advanced_detector = get_advanced_detector()
+    data_pipeline = get_data_pipeline()
+else:
+    advanced_detector = None
+    data_pipeline = None
 
 # Setup logging
 logging.basicConfig(
@@ -26,16 +100,17 @@ logger = logging.getLogger(__name__)
 # FastAPI app
 app = FastAPI(
     title="CipherGuard Fraud Detection API",
-    description="Encrypted real-time fraud detection using CyborgDB",
+    description="Encrypted real-time fraud detection using microservices architecture with Kafka streaming",
     version="0.1.0"
 )
 
-# Initialize components
+# Global state
 cyborg_client = None
-cyborg_shim = get_cyborg_shim()  # Fallback mock
 use_sdk = False
-isolation_forest = None  # Will be initialized after collecting training data
+isolation_forest = None
 
+# HTTP client for health checks
+client = None
 
 # ============ Pydantic Models ============
 
@@ -62,111 +137,180 @@ class DetectionResult(BaseModel):
 class HealthStatus(BaseModel):
     """Health check response."""
     status: str
-    cyborg_vectors_count: int
-    model_status: str
+    services: Dict[str, str]
     timestamp: str
 
 
 class FeedbackData(BaseModel):
-    """User feedback for model retraining."""
+    """Analyst feedback data."""
     transaction_id: str
     was_fraud: bool
-    feedback_text: Optional[str] = None
+    analyst_id: str
+    comments: Optional[str] = None
 
 
-# ============ Helper Functions ============
+# Phase 5: Advanced Models and Data Integration Models
 
-def compute_fraud_score(vector: np.ndarray,
-                       knn_results: List,
-                       anomaly_score: float = 0.5) -> float:
-    """Compute fraud score from multiple signals."""
-    if not knn_results:
-        return 0.5
-    
-    avg_distance = np.mean([dist for _, dist in knn_results])
-    distance_score = min(avg_distance, 1.0)
-    fraud_score = (anomaly_score * 0.4 + distance_score * 0.6)
-    return float(fraud_score)
-
-
-def get_risk_level(fraud_score: float) -> str:
-    """Map fraud score to risk level."""
-    if fraud_score < 0.3:
-        return "LOW"
-    elif fraud_score < 0.6:
-        return "MEDIUM"
-    elif fraud_score < 0.8:
-        return "HIGH"
-    else:
-        return "CRITICAL"
+class AdvancedDetectionResult(BaseModel):
+    """Advanced fraud detection result with multiple models."""
+    transaction_id: str
+    is_fraudulent: bool
+    ensemble_score: float
+    confidence: float
+    model_predictions: Dict[str, float]
+    risk_level: str
+    similar_transactions: List[str]
+    timestamp: str
+    phase: str = "5"
 
 
-# ============ API Endpoints ============
+class ModelTrainingRequest(BaseModel):
+    """Request to train advanced models."""
+    n_samples: Optional[int] = 10000
+    fraud_ratio: Optional[float] = 0.1
+    epochs: Optional[int] = 50
+    test_split: Optional[float] = 0.2
+
+
+class ModelTrainingResponse(BaseModel):
+    """Response from model training."""
+    status: str
+    models_trained: List[str]
+    evaluation_metrics: Optional[Dict[str, Any]] = None
+    training_time: float
+    timestamp: str
+
+
+class DataSourceConfig(BaseModel):
+    """Configuration for data source."""
+    name: str
+    type: str  # 'payment_gateway', 'database', 'file'
+    config: Dict[str, Any]
+
+
+class DataIngestionRequest(BaseModel):
+    """Request to ingest data from sources."""
+    sources: List[DataSourceConfig]
+    start_time: str
+    end_time: str
+    batch_size: Optional[int] = 1000
+
+
+class DataIngestionResponse(BaseModel):
+    """Response from data ingestion."""
+    status: str
+    sources_connected: Dict[str, bool]
+    transactions_processed: int
+    transactions_failed: int
+    batches_processed: int
+    timestamp: str
+
+
+async def check_service_health(service_name: str, url: str) -> str:
+    """Check health of a microservice."""
+    try:
+        resp = await client.get(f"{url}/health")
+        if resp.status_code == 200:
+            return "healthy"
+        else:
+            return f"http_{resp.status_code}"
+    except Exception as e:
+        logger.warning(f"Service {service_name} health check failed: {e}")
+        return "unreachable"
+
 
 @app.on_event("startup")
 async def startup_event():
     """Initialize application on startup."""
-    global cyborg_client, use_sdk
+    global cyborg_client, use_sdk, isolation_forest, client, advanced_detector, data_pipeline
     
     logger.info("=== CipherGuard Fraud Detection System Starting ===")
     
-    try:
-        cyborg_client = await get_cyborg_client()
-        if cyborg_client.cyborg_client:
-            use_sdk = True
-            logger.info("✅ CyborgDB SDK initialized")
-        else:
-            logger.warning("⚠️  CyborgDB SDK not available, using local shim")
-            use_sdk = False
-    except Exception as e:
-        logger.warning(f"⚠️  Failed to initialize CyborgDB SDK: {e}, using local shim")
-        use_sdk = False
+    # Initialize HTTP client
+    client = httpx.AsyncClient(timeout=5.0)
     
-    logger.info(f"Mode: {'CyborgDB SDK' if use_sdk else 'Local Shim'}")
-    logger.info(f"Vectors in store: {cyborg_shim.count()}")
+    # Initialize CyborgDB client
+    if CYBORG_AVAILABLE:
+        try:
+            cyborg_client = get_cyborg_client()
+            use_sdk = cyborg_client is not None
+            logger.info(f"CyborgDB client initialized: {'SDK' if use_sdk else 'Mock'}")
+        except Exception as e:
+            logger.warning(f"CyborgDB initialization failed: {e}")
+            cyborg_client = None
+            use_sdk = False
+    
+    # Initialize Isolation Forest
+    try:
+        isolation_forest = IsolationForest(contamination=0.1, random_state=42)
+        logger.info("Isolation Forest model initialized")
+    except Exception as e:
+        logger.warning(f"Isolation Forest initialization failed: {e}")
+        isolation_forest = None
+    
+    # Initialize Phase 5 components
+    if PHASE5_FEATURES_AVAILABLE:
+        try:
+            # Advanced detector is already initialized globally
+            logger.info("Phase 5 advanced models initialized")
+            
+            # Try to load existing models
+            if advanced_detector:
+                advanced_detector.load_models()
+                logger.info("Existing advanced models loaded")
+            
+        except Exception as e:
+            logger.warning(f"Phase 5 initialization failed: {e}")
+    
     logger.info("API ready for requests")
 
 
-@app.get("/health", response_model=HealthStatus)
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown."""
+    global client
+    if client:
+        await client.aclose()
+    logger.info("Server shutting down")
+
+
+@app.get("/health")
 async def health_check():
     """Health check endpoint."""
-    model_status = "trained" if isolation_forest is not None else "not_trained"
-    
-    return HealthStatus(
-        status="operational",
-        cyborg_vectors_count=cyborg_shim.count(),
-        model_status=model_status,
-        timestamp=datetime.utcnow().isoformat()
-    )
+    return {
+        "status": "operational",
+        "message": "CipherGuard Fraud Detection API is running",
+        "timestamp": datetime.utcnow().isoformat()
+    }
 
 
 @app.post("/detect", response_model=DetectionResult)
 async def detect_fraud(transaction: Transaction):
-    """Main fraud detection endpoint."""
+    """Main fraud detection endpoint - local processing without Kafka."""
     try:
         transaction_id = f"txn_{datetime.utcnow().timestamp()}"
         logger.info(f"Processing transaction: {transaction_id}")
+        
+        # Extract features from transaction
         vector = extract_transaction_vector(transaction.dict())
         
-        metadata = {
-            "customer_id": transaction.customer_id,
-            "timestamp": transaction.timestamp or datetime.utcnow().isoformat(),
-            "merchant": transaction.merchant,
-            "amount": transaction.amount
-        }
-        
-        if use_sdk and cyborg_client:
-            await cyborg_client.insert_transaction_vector(transaction_id, vector, metadata)
-        else:
+        # Store in CyborgDB if available
+        if cyborg_shim:
+            metadata = {
+                "customer_id": transaction.customer_id,
+                "timestamp": transaction.timestamp or datetime.utcnow().isoformat(),
+                "merchant": transaction.merchant,
+                "amount": transaction.amount
+            }
             cyborg_shim.insert(transaction_id, vector, metadata)
         
-        if use_sdk and cyborg_client:
-            knn_results = await cyborg_client.search_similar_vectors(vector, k=5)
-        else:
+        # Find similar transactions
+        similar_ids = []
+        if cyborg_shim and len(cyborg_shim.vectors) > 0:
             knn_results = cyborg_shim.search(vector, k=5)
+            similar_ids = [tid for tid, _ in knn_results]
         
-        similar_ids = [tid for tid, _ in knn_results]
-        
+        # Calculate fraud score
         if isolation_forest is not None:
             vector_2d = vector.reshape(1, -1)
             anomaly_pred = isolation_forest.predict(vector_2d)[0]
@@ -174,11 +318,26 @@ async def detect_fraud(transaction: Transaction):
         else:
             anomaly_score = 0.5
         
-        fraud_score = compute_fraud_score(vector, knn_results, anomaly_score)
-        is_fraud = fraud_score > 0.6
-        risk_level = get_risk_level(fraud_score)
+        # Simple fraud score calculation
+        base_score = anomaly_score
+        if len(similar_ids) > 0:
+            # If we have similar transactions, adjust score based on amount patterns
+            base_score = min(base_score + 0.1, 1.0)
         
-        logger.info(f"Detection result - Score: {fraud_score:.3f}, Risk: {risk_level}")
+        fraud_score = base_score
+        is_fraud = fraud_score > 0.6
+        
+        # Determine risk level
+        if fraud_score < 0.3:
+            risk_level = "LOW"
+        elif fraud_score < 0.6:
+            risk_level = "MEDIUM"
+        elif fraud_score < 0.8:
+            risk_level = "HIGH"
+        else:
+            risk_level = "CRITICAL"
+        
+        logger.info(f"Detection complete - Score: {fraud_score:.3f}, Risk: {risk_level}")
         
         return DetectionResult(
             transaction_id=transaction_id,
@@ -199,53 +358,18 @@ async def submit_feedback(feedback: FeedbackData):
     """Submit feedback for model retraining."""
     try:
         logger.info(f"Received feedback for {feedback.transaction_id}: fraud={feedback.was_fraud}")
+        
+        # In standalone mode, just log the feedback
+        # In production, this would trigger model retraining
         return {
-            "status": "feedback_received",
+            "status": "feedback_received", 
             "transaction_id": feedback.transaction_id,
+            "message": "Feedback logged (model retraining not implemented in standalone mode)",
             "timestamp": datetime.utcnow().isoformat()
         }
+        
     except Exception as e:
         logger.error(f"Error processing feedback: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/train")
-async def train_model(background_tasks: BackgroundTasks):
-    """Trigger model retraining."""
-    try:
-        global isolation_forest
-        logger.info("Starting model retraining...")
-        
-        vectors = []
-        for tid, vec in cyborg_shim.vectors.items():
-            vectors.append(vec)
-        
-        if len(vectors) < 10:
-            logger.warning(f"Insufficient data for training: {len(vectors)} vectors")
-            return {
-                "status": "skipped",
-                "reason": "Insufficient training data (need >= 10 vectors)",
-                "vectors_count": len(vectors)
-            }
-        
-        X = np.array(vectors)
-        isolation_forest = IsolationForest(
-            contamination=0.1,
-            random_state=42,
-            n_estimators=100
-        )
-        isolation_forest.fit(X)
-        
-        logger.info(f"Model trained on {len(vectors)} vectors")
-        
-        return {
-            "status": "training_started",
-            "vectors_used": len(vectors),
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        
-    except Exception as e:
-        logger.error(f"Error training model: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -253,32 +377,288 @@ async def train_model(background_tasks: BackgroundTasks):
 async def get_stats():
     """Get system statistics."""
     try:
-        stats = cyborg_shim.get_stats()
-        stats["model_trained"] = isolation_forest is not None
-        stats["timestamp"] = datetime.utcnow().isoformat()
+        # Get stats from each service
+        stats = {"timestamp": datetime.utcnow().isoformat()}
+
+        # Ingestion stats
+        try:
+            resp = await client.get(f"{MICROSERVICES['ingestion']}/health")
+            if resp.status_code == 200:
+                stats["ingestion"] = resp.json()
+        except:
+            stats["ingestion"] = {"error": "unreachable"}
+
+        # Embedding stats
+        try:
+            resp = await client.get(f"{MICROSERVICES['embedding']}/health")
+            if resp.status_code == 200:
+                stats["embedding"] = resp.json()
+        except:
+            stats["embedding"] = {"error": "unreachable"}
+
+        # Fraud detection stats
+        try:
+            resp = await client.get(f"{MICROSERVICES['fraud_detection']}/health")
+            if resp.status_code == 200:
+                stats["fraud_detection"] = resp.json()
+        except:
+            stats["fraud_detection"] = {"error": "unreachable"}
+
+        # Alert stats
+        try:
+            resp = await client.get(f"{MICROSERVICES['alert']}/health")
+            if resp.status_code == 200:
+                stats["alert"] = resp.json()
+        except:
+            stats["alert"] = {"error": "unreachable"}
+
         return stats
+
     except Exception as e:
         logger.error(f"Error getting stats: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ============ Phase 5: Advanced ML Endpoints ============
+
+@app.post("/detect/advanced", response_model=AdvancedDetectionResult)
+async def detect_fraud_advanced(transaction: Transaction):
+    """Advanced fraud detection using deep learning and ensemble models."""
+    if not PHASE5_FEATURES_AVAILABLE or not advanced_detector:
+        raise HTTPException(
+            status_code=503,
+            detail="Phase 5 features not available. Advanced models not loaded."
+        )
+
+    try:
+        transaction_id = f"txn_{datetime.utcnow().timestamp()}"
+        logger.info(f"Processing advanced detection for transaction: {transaction_id}")
+
+        # Extract features
+        vector = extract_transaction_vector(transaction.dict())
+
+        # Get advanced model predictions
+        predictions = advanced_detector.predict_fraud(vector)
+
+        # Determine risk level based on ensemble score
+        ensemble_score = predictions.get('ensemble_score', 0.5)
+        if ensemble_score < 0.3:
+            risk_level = "LOW"
+        elif ensemble_score < 0.6:
+            risk_level = "MEDIUM"
+        elif ensemble_score < 0.8:
+            risk_level = "HIGH"
+        else:
+            risk_level = "CRITICAL"
+
+        # Find similar transactions (if CyborgDB available)
+        similar_ids = []
+        if cyborg_shim and len(cyborg_shim.vectors) > 0:
+            knn_results = cyborg_shim.search(vector, k=5)
+            similar_ids = [tid for tid, _ in knn_results]
+
+        logger.info(f"Advanced detection complete - Ensemble Score: {ensemble_score:.3f}, Risk: {risk_level}")
+
+        return AdvancedDetectionResult(
+            transaction_id=transaction_id,
+            is_fraudulent=predictions.get('is_fraudulent', False),
+            ensemble_score=ensemble_score,
+            confidence=predictions.get('confidence', 0.0),
+            model_predictions={
+                k: v for k, v in predictions.items()
+                if k not in ['is_fraudulent', 'ensemble_score', 'confidence']
+            },
+            risk_level=risk_level,
+            similar_transactions=similar_ids[:3],
+            timestamp=datetime.utcnow().isoformat()
+        )
+
+    except Exception as e:
+        logger.error(f"Error in advanced fraud detection: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/models/train", response_model=ModelTrainingResponse)
+async def train_advanced_models(request: ModelTrainingRequest):
+    """Train advanced ML models with synthetic or real data."""
+    if not PHASE5_FEATURES_AVAILABLE or not advanced_detector:
+        raise HTTPException(
+            status_code=503,
+            detail="Phase 5 features not available. Cannot train advanced models."
+        )
+
+    try:
+        import time
+        start_time = time.time()
+
+        logger.info(f"Starting advanced model training with {request.n_samples} samples")
+
+        # Generate synthetic training data
+        X, y = advanced_detector.generate_synthetic_data(
+            n_samples=request.n_samples,
+            fraud_ratio=request.fraud_ratio
+        )
+
+        # Split data
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=request.test_split, random_state=42
+        )
+
+        # Train models
+        results = advanced_detector.train_models(
+            X_train, y_train, X_test, y_test, epochs=request.epochs
+        )
+
+        # Save models
+        advanced_detector.save_models()
+
+        training_time = time.time() - start_time
+
+        logger.info(f"Model training completed in {training_time:.2f} seconds")
+
+        return ModelTrainingResponse(
+            status="training_completed",
+            models_trained=list(results.keys()),
+            evaluation_metrics=results.get('evaluation', {}),
+            training_time=training_time,
+            timestamp=datetime.utcnow().isoformat()
+        )
+
+    except Exception as e:
+        logger.error(f"Error training models: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/data/ingest", response_model=DataIngestionResponse)
+async def ingest_data(request: DataIngestionRequest):
+    """Ingest data from configured sources."""
+    if not PHASE5_FEATURES_AVAILABLE or not data_pipeline:
+        raise HTTPException(
+            status_code=503,
+            detail="Phase 5 features not available. Data integration not loaded."
+        )
+
+    try:
+        from datetime import datetime
+        start_time = datetime.fromisoformat(request.start_time)
+        end_time = datetime.fromisoformat(request.end_time)
+
+        logger.info(f"Starting data ingestion from {len(request.sources)} sources")
+
+        # Add sources to pipeline
+        for source_config in request.sources:
+            if source_config.type == 'file':
+                from .data_integration import FileSource
+                source = FileSource(
+                    file_path=source_config.config['file_path'],
+                    file_format=source_config.config.get('format', 'csv')
+                )
+            elif source_config.type == 'database':
+                from .data_integration import DatabaseSource
+                source = DatabaseSource(
+                    connection_string=source_config.config['connection_string'],
+                    table_name=source_config.config['table_name']
+                )
+            elif source_config.type == 'payment_gateway':
+                from .data_integration import PaymentGatewaySource
+                source = PaymentGatewaySource(
+                    api_key=source_config.config['api_key'],
+                    api_secret=source_config.config['api_secret'],
+                    base_url=source_config.config['base_url']
+                )
+            else:
+                raise ValueError(f"Unsupported source type: {source_config.type}")
+
+            data_pipeline.add_source(source_config.name, source)
+
+        # Initialize sources
+        connection_results = await data_pipeline.initialize_sources()
+
+        # Process data in batches
+        batches_processed = 0
+        async for batch in data_pipeline.fetch_all_transactions(
+            start_time, end_time, request.batch_size
+        ):
+            batches_processed += 1
+            # Here you could process/store the batch
+            logger.info(f"Processed batch {batches_processed} with {len(batch)} transactions")
+
+        # Get final stats
+        stats = data_pipeline.get_pipeline_stats()
+
+        logger.info(f"Data ingestion completed: {stats}")
+
+        return DataIngestionResponse(
+            status="ingestion_completed",
+            sources_connected=connection_results,
+            transactions_processed=stats['processed_transactions'],
+            transactions_failed=stats['failed_transactions'],
+            batches_processed=batches_processed,
+            timestamp=datetime.utcnow().isoformat()
+        )
+
+    except Exception as e:
+        logger.error(f"Error in data ingestion: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/models/status")
+async def get_model_status():
+    """Get status of advanced models."""
+    if not PHASE5_FEATURES_AVAILABLE:
+        return {
+            "phase": "4",
+            "message": "Running in Phase 4 mode. Advanced models not available.",
+            "available_models": ["isolation_forest"]
+        }
+
+    status = {
+        "phase": "5",
+        "advanced_models_available": advanced_detector is not None,
+        "data_pipeline_available": data_pipeline is not None,
+        "models": {}
+    }
+
+    if advanced_detector:
+        status["models"] = {
+            "neural_network": advanced_detector.neural_network is not None,
+            "xgboost": advanced_detector.xgboost_model is not None,
+            "ensemble": advanced_detector.ensemble_model is not None
+        }
+
+    if data_pipeline:
+        status["data_pipeline_stats"] = data_pipeline.get_pipeline_stats()
+
+    return status
+
+
 @app.get("/")
 async def root():
     """Root endpoint with API info."""
-    backend = "CyborgDB SDK" if use_sdk else "Local Shim"
-    
+    base_endpoints = {
+        "POST /detect": "Basic fraud detection (Phase 1-4)",
+        "POST /feedback": "Submit analyst feedback for retraining",
+        "GET /stats": "Get system statistics",
+        "GET /health": "Health check"
+    }
+
+    phase5_endpoints = {}
+    if PHASE5_FEATURES_AVAILABLE:
+        phase5_endpoints = {
+            "POST /detect/advanced": "Advanced fraud detection with deep learning",
+            "POST /models/train": "Train advanced ML models",
+            "POST /data/ingest": "Ingest data from external sources",
+            "GET /models/status": "Get advanced model status"
+        }
+
     return {
         "name": "CipherGuard Fraud Detection API",
         "version": "0.1.0",
-        "description": "Encrypted real-time fraud detection using CyborgDB",
-        "backend": backend,
-        "endpoints": {
-            "POST /detect": "Analyze transaction for fraud",
-            "POST /feedback": "Submit analyst feedback for retraining",
-            "POST /train": "Trigger model retraining",
-            "GET /stats": "Get system statistics",
-            "GET /health": "Health check"
-        }
+        "phase": "5" if PHASE5_FEATURES_AVAILABLE else "4",
+        "description": "Encrypted real-time fraud detection with advanced ML and data integration",
+        "architecture": "Microservices",
+        "services": list(MICROSERVICES.keys()),
+        "endpoints": {**base_endpoints, **phase5_endpoints}
     }
 
 
@@ -287,7 +667,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
-        port=8001,
+        port=8000,
         reload=True,
         log_level="info"
     )

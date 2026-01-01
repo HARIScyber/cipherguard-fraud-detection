@@ -8,7 +8,7 @@ import requests
 import json
 from typing import Dict
 
-API_URL = "http://localhost:8001"
+API_URL = "http://localhost:8000"
 
 # Sample transactions for testing
 SAMPLE_TRANSACTIONS = {

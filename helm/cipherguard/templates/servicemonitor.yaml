@@ -1,0 +1,23 @@
+{{- if and .Values.monitoring.enabled .Values.monitoring.prometheus.enabled .Values.monitoring.prometheus.serviceMonitor.enabled -}}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "cipherguard.fullname" . }}
+  labels:
+    {{- include "cipherguard.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.prometheus.serviceMonitor.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  namespace: {{ .Values.monitoring.prometheus.serviceMonitor.namespace | default .Release.Namespace }}
+spec:
+  endpoints:
+    - interval: {{ .Values.monitoring.prometheus.serviceMonitor.interval }}
+      port: http
+      path: /metrics
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      {{- include "cipherguard.selectorLabels" . | nindent 6 }}
+{{- end }}

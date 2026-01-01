@@ -1,0 +1,129 @@
+# Default values for cipherguard.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# Global configuration
+global:
+  environment: production
+  imageRegistry: ""
+  imagePullSecrets: []
+
+# API Gateway configuration
+api:
+  replicaCount: 3
+  image:
+    repository: cipherguard/api
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: LoadBalancer
+    port: 80
+    targetPort: 8000
+  resources:
+    limits:
+      cpu: 500m
+      memory: 1Gi
+    requests:
+      cpu: 250m
+      memory: 512Mi
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# Fraud Detection Service configuration
+fraudDetection:
+  replicaCount: 2
+  image:
+    repository: cipherguard/fraud-detection
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8003
+    targetPort: 8003
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# Kafka configuration (external dependency)
+kafka:
+  enabled: false  # Set to true if deploying Kafka with this chart
+  bootstrapServers: "kafka-service:9092"
+
+# Redis configuration (external dependency)
+redis:
+  enabled: false  # Set to true if deploying Redis with this chart
+  host: redis-service
+  port: 6379
+
+# PostgreSQL configuration (external dependency)
+postgresql:
+  enabled: false  # Set to true if deploying PostgreSQL with this chart
+  host: postgresql-service
+  port: 5432
+
+# Secrets configuration
+secrets:
+  encryptionKey: "your-32-char-encryption-key-here!"
+  cyborgdbApiKey: "cyborg_e3652dfedfa64a2392d9a927211ffd77"
+
+# ConfigMap configuration
+config:
+  environment: production
+  kafkaBootstrapServers: "kafka-service:9092"
+  cyborgdbApiKey: "cyborg_e3652dfedfa64a2392d9a927211ffd77"
+
+# Persistence configuration
+persistence:
+  enabled: true
+  accessMode: ReadWriteOnce
+  size: 10Gi
+  storageClass: ""
+
+# Ingress configuration
+ingress:
+  enabled: true
+  className: ""
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+  hosts:
+    - host: fraud-detection.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# Monitoring configuration
+monitoring:
+  enabled: true
+  prometheus:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      namespace: monitoring
+      interval: 30s
+  grafana:
+    enabled: false  # Set to true to deploy Grafana dashboards
+
+# Security configuration
+security:
+  podSecurityContext: {}
+  securityContext: {}
+
+# Service account configuration
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# Pod disruption budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1

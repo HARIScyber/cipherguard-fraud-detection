@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cipherguard.fullname" . }}-fraud-detection
+  labels:
+    {{- include "cipherguard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: fraud-detection
+spec:
+  replicas: {{ .Values.fraudDetection.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "cipherguard.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: fraud-detection
+  template:
+    metadata:
+      labels:
+        {{- include "cipherguard.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: fraud-detection
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "cipherguard.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.security.podSecurityContext | nindent 8 }}
+      containers:
+        - name: fraud-detection
+          securityContext:
+            {{- toYaml .Values.security.securityContext | nindent 12 }}
+          image: {{ .Values.fraudDetection.image.repository }}:{{ .Values.fraudDetection.image.tag | default .Chart.AppVersion }}
+          imagePullPolicy: {{ .Values.fraudDetection.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8003
+              protocol: TCP
+          env:
+            - name: ENVIRONMENT
+              value: {{ .Values.global.environment }}
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: {{ .Values.config.kafkaBootstrapServers }}
+            - name: CYBORGDB_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "cipherguard.fullname" . }}-secrets
+                  key: cyborgdbApiKey
+            - name: ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "cipherguard.fullname" . }}-secrets
+                  key: encryptionKey
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.fraudDetection.resources | nindent 12 }}
+      {{- with .Values.fraudDetection.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.fraudDetection.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.fraudDetection.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

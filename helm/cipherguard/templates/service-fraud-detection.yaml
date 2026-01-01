@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cipherguard.fullname" . }}-fraud-detection
+  labels:
+    {{- include "cipherguard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: fraud-detection
+spec:
+  type: {{ .Values.fraudDetection.service.type }}
+  ports:
+    - port: {{ .Values.fraudDetection.service.port }}
+      targetPort: {{ .Values.fraudDetection.service.targetPort }}
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "cipherguard.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: fraud-detection

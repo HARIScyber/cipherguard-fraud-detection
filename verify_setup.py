@@ -43,7 +43,7 @@ def check_dependencies():
         "uvicorn",
         "pydantic",
         "numpy",
-        "scikit-learn",
+        "sklearn",
         "httpx",
     ]
     
@@ -154,6 +154,8 @@ def check_ports():
             # Optional ports
             status = "In use" if not available else "Available"
             print_check(True, f"Port {port} ({service}) - {status}")
+    
+    return True
 
 
 def main():

@@ -1,0 +1,223 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cipherguard-config
+  namespace: fraud-detection
+data:
+  ENVIRONMENT: "production"
+  KAFKA_BOOTSTRAP_SERVERS: "kafka-service:9092"
+  ENCRYPTION_KEY: "your-32-char-encryption-key-here!"
+  CYBORGDB_API_KEY: "cyborg_e3652dfedfa64a2392d9a927211ffd77"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cipherguard-secrets
+  namespace: fraud-detection
+type: Opaque
+data:
+  # Base64 encoded secrets
+  encryption-key: eW91ci0zMi1jaGFyLWVuY3J5cHRpb24ta2V5LWhlcmUh  # your-32-char-encryption-key-here!
+  cyborgdb-key: Y3lib3JnX2UzNjUyZGZlZGE0YTIzOWQyOWE5MjcyMTFmZDc3  # cyborg_e3652dfedfa64a2392d9a927211ffd77
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cipherguard-api
+  namespace: fraud-detection
+  labels:
+    app: cipherguard-api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: cipherguard-api
+  template:
+    metadata:
+      labels:
+        app: cipherguard-api
+    spec:
+      containers:
+      - name: api
+        image: cipherguard/api:latest
+        ports:
+        - containerPort: 8000
+        env:
+        - name: ENVIRONMENT
+          valueFrom:
+            configMapKeyRef:
+              name: cipherguard-config
+              key: ENVIRONMENT
+        - name: KAFKA_BOOTSTRAP_SERVERS
+          valueFrom:
+            configMapKeyRef:
+              name: cipherguard-config
+              key: KAFKA_BOOTSTRAP_SERVERS
+        - name: ENCRYPTION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: cipherguard-secrets
+              key: encryption-key
+        - name: CYBORGDB_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: cipherguard-secrets
+              key: cyborgdb-key
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - name: models-volume
+          mountPath: /app/models
+      volumes:
+      - name: models-volume
+        persistentVolumeClaim:
+          claimName: models-pvc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fraud-detection-service
+  namespace: fraud-detection
+  labels:
+    app: fraud-detection
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: fraud-detection
+  template:
+    metadata:
+      labels:
+        app: fraud-detection
+    spec:
+      containers:
+      - name: fraud-detection
+        image: cipherguard/fraud-detection:latest
+        ports:
+        - containerPort: 8003
+        env:
+        - name: ENVIRONMENT
+          valueFrom:
+            configMapKeyRef:
+              name: cipherguard-config
+              key: ENVIRONMENT
+        - name: KAFKA_BOOTSTRAP_SERVERS
+          valueFrom:
+            configMapKeyRef:
+              name: cipherguard-config
+              key: KAFKA_BOOTSTRAP_SERVERS
+        - name: ENCRYPTION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: cipherguard-secrets
+              key: encryption-key
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8003
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8003
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        volumeMounts:
+        - name: models-volume
+          mountPath: /app/models
+      volumes:
+      - name: models-volume
+        persistentVolumeClaim:
+          claimName: models-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cipherguard-api-service
+  namespace: fraud-detection
+spec:
+  selector:
+    app: cipherguard-api
+  ports:
+  - port: 80
+    targetPort: 8000
+    protocol: TCP
+  type: LoadBalancer
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fraud-detection-service
+  namespace: fraud-detection
+spec:
+  selector:
+    app: fraud-detection
+  ports:
+  - port: 8003
+    targetPort: 8003
+    protocol: TCP
+  type: ClusterIP
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: models-pvc
+  namespace: fraud-detection
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cipherguard-ingress
+  namespace: fraud-detection
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  rules:
+  - host: fraud-detection.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: cipherguard-api-service
+            port:
+              number: 80
+      - path: /metrics
+        pathType: Prefix
+        backend:
+          service:
+            name: cipherguard-api-service
+            port:
+              number: 80

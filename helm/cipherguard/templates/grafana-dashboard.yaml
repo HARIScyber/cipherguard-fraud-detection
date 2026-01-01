@@ -1,0 +1,96 @@
+{{- if and .Values.monitoring.enabled .Values.monitoring.grafana.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "cipherguard.fullname" . }}-grafana-dashboard
+  labels:
+    {{- include "cipherguard.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  fraud-detection-dashboard.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "CipherGuard Fraud Detection",
+        "tags": ["cipherguard", "fraud-detection"],
+        "timezone": "browser",
+        "panels": [
+          {
+            "id": 1,
+            "title": "Request Rate",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(http_requests_total[5m])",
+                "legendFormat": "{{method}} {{endpoint}}"
+              }
+            ]
+          },
+          {
+            "id": 2,
+            "title": "Model Prediction Latency",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.95, rate(model_prediction_duration_seconds_bucket[5m]))",
+                "legendFormat": "95th percentile"
+              }
+            ]
+          },
+          {
+            "id": 3,
+            "title": "Fraud Detection Accuracy",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "fraud_detection_accuracy",
+                "legendFormat": "Accuracy"
+              }
+            ]
+          },
+          {
+            "id": 4,
+            "title": "System Resources",
+            "type": "row"
+          },
+          {
+            "id": 5,
+            "title": "CPU Usage",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(process_cpu_user_seconds_total[5m]) / rate(process_cpu_seconds_total[5m]) * 100",
+                "legendFormat": "CPU Usage %"
+              }
+            ]
+          },
+          {
+            "id": 6,
+            "title": "Memory Usage",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "process_resident_memory_bytes / 1024 / 1024",
+                "legendFormat": "Memory Usage (MB)"
+              }
+            ]
+          }
+        ],
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        },
+        "timepicker": {},
+        "templating": {
+          "list": []
+        },
+        "annotations": {
+          "list": []
+        },
+        "refresh": "5s",
+        "schemaVersion": 27,
+        "version": 0,
+        "links": []
+      }
+    }
+{{- end }}

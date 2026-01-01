@@ -1,0 +1,182 @@
+version: '3.8'
+
+services:
+  # API Gateway / Main API (for backward compatibility)
+  cipherguard-api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - CYBORGDB_API_KEY=${CYBORGDB_API_KEY}
+      - ENVIRONMENT=production
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - ENCRYPTION_KEY=your-32-char-encryption-key-here!
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      - ingestion-service
+      - embedding-service
+      - fraud-detection-service
+      - alert-service
+      - kafka
+
+  # Microservices
+  ingestion-service:
+    build: ./services/ingestion
+    ports:
+      - "8001:8001"
+    environment:
+      - ENVIRONMENT=production
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - ENCRYPTION_KEY=your-32-char-encryption-key-here!
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8001/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    depends_on:
+      - kafka
+
+  embedding-service:
+    build: ./services/embedding
+    ports:
+      - "8002:8002"
+    environment:
+      - ENVIRONMENT=production
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - ENCRYPTION_KEY=your-32-char-encryption-key-here!
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8002/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    depends_on:
+      - kafka
+
+  fraud-detection-service:
+    build: ./services/fraud-detection
+    ports:
+      - "8003:8003"
+    environment:
+      - ENVIRONMENT=production
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - ENCRYPTION_KEY=your-32-char-encryption-key-here!
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8003/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    depends_on:
+      - kafka
+
+  alert-service:
+    build: ./services/alert
+    ports:
+      - "8004:8004"
+    environment:
+      - ENVIRONMENT=production
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - ENCRYPTION_KEY=your-32-char-encryption-key-here!
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8004/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    depends_on:
+      - kafka
+
+  # Phase 2: Secure Data Pipeline - Kafka Streaming
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    hostname: zookeeper
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo 'ruok' | nc localhost 2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    hostname: kafka
+    container_name: kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+      - "9101:9101"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_JMX_PORT: 9101
+      KAFKA_JMX_HOSTNAME: localhost
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+      - kafka-logs:/var/lib/kafka/logs
+
+  # Redis for caching and session management
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # PostgreSQL for persistent storage
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: cipherguard
+      POSTGRES_USER: cipherguard
+      POSTGRES_PASSWORD: secure_password_2024
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cipherguard -d cipherguard"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  kafka-data:
+  kafka-logs:
+  redis-data:
+  postgres-data:
+
