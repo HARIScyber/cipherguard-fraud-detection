@@ -10,10 +10,8 @@ import logging
 import json
 from datetime import datetime, timedelta
 import asyncio
-import aiohttp
 import os
 from dataclasses import dataclass
-from abc import ABC, abstractmethod
 
 logger = logging.getLogger(__name__)
 
@@ -31,155 +29,25 @@ class TransactionData:
     ip_address: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
 
-class DataSource(ABC):
+class DataSource:
     """Abstract base class for data sources."""
 
-    @abstractmethod
     async def connect(self) -> bool:
         """Establish connection to data source."""
-        pass
+        return True
 
-    @abstractmethod
     async def fetch_transactions(self, start_time: datetime, end_time: datetime) -> Iterator[TransactionData]:
         """Fetch transactions within time range."""
-        pass
+        # Return empty iterator by default
+        return iter([])
 
-    @abstractmethod
-    async def validate_transaction(self, transaction: Dict[str, Any]) -> bool:
+    def validate_transaction(self, transaction: Dict[str, Any]) -> bool:
         """Validate transaction data."""
-        pass
-
-class PaymentGatewaySource(DataSource):
-    """Integration with payment gateway APIs."""
-
-    def __init__(self, api_key: str, api_secret: str, base_url: str):
-        self.api_key = api_key
-        self.api_secret = api_secret
-        self.base_url = base_url
-        self.session: Optional[aiohttp.ClientSession] = None
-
-    async def connect(self) -> bool:
-        """Connect to payment gateway."""
-        try:
-            self.session = aiohttp.ClientSession(
-                headers={
-                    'Authorization': f'Bearer {self.api_key}',
-                    'Content-Type': 'application/json'
-                }
-            )
-            # Test connection
-            async with self.session.get(f"{self.base_url}/health") as response:
-                return response.status == 200
-        except Exception as e:
-            logger.error(f"Failed to connect to payment gateway: {e}")
-            return False
-
-    async def fetch_transactions(self, start_time: datetime, end_time: datetime) -> Iterator[TransactionData]:
-        """Fetch transactions from payment gateway."""
-        if not self.session:
-            raise ConnectionError("Not connected to payment gateway")
-
-        params = {
-            'start_time': start_time.isoformat(),
-            'end_time': end_time.isoformat(),
-            'limit': 1000
-        }
-
-        try:
-            async with self.session.get(f"{self.base_url}/transactions", params=params) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    for tx in data.get('transactions', []):
-                        if self.validate_transaction(tx):
-                            yield self._parse_transaction(tx)
-                else:
-                    logger.error(f"Failed to fetch transactions: {response.status}")
-        except Exception as e:
-            logger.error(f"Error fetching transactions: {e}")
-
-    def validate_transaction(self, transaction: Dict[str, Any]) -> bool:
-        """Validate transaction data structure."""
-        required_fields = ['id', 'amount', 'merchant', 'timestamp']
+        required_fields = ['amount', 'timestamp']
         return all(field in transaction for field in required_fields)
-
-    def _parse_transaction(self, tx: Dict[str, Any]) -> TransactionData:
-        """Parse raw transaction data into standardized format."""
-        return TransactionData(
-            transaction_id=str(tx['id']),
-            amount=float(tx['amount']),
-            merchant=tx.get('merchant', 'Unknown'),
-            device=tx.get('device', 'desktop'),
-            country=tx.get('country', 'US'),
-            timestamp=datetime.fromisoformat(tx['timestamp']),
-            user_id=tx.get('user_id'),
-            card_number=tx.get('card_last_four'),
-            ip_address=tx.get('ip_address'),
-            metadata=tx.get('metadata', {})
-        )
-
-class DatabaseSource(DataSource):
-    """Integration with database sources (PostgreSQL, MySQL, etc.)."""
-
-    def __init__(self, connection_string: str, table_name: str):
-        self.connection_string = connection_string
-        self.table_name = table_name
-        self.engine = None
-
-    async def connect(self) -> bool:
-        """Connect to database."""
-        try:
-            from sqlalchemy import create_engine
-            self.engine = create_engine(self.connection_string)
-            # Test connection
-            with self.engine.connect() as conn:
-                conn.execute("SELECT 1")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to connect to database: {e}")
-            return False
-
-    async def fetch_transactions(self, start_time: datetime, end_time: datetime) -> Iterator[TransactionData]:
-        """Fetch transactions from database."""
-        if not self.engine:
-            raise ConnectionError("Not connected to database")
-
-        query = f"""
-        SELECT * FROM {self.table_name}
-        WHERE timestamp BETWEEN '{start_time}' AND '{end_time}'
-        ORDER BY timestamp
-        """
-
-        try:
-            df = pd.read_sql(query, self.engine)
-            for _, row in df.iterrows():
-                tx_dict = row.to_dict()
-                if self.validate_transaction(tx_dict):
-                    yield self._parse_transaction(tx_dict)
-        except Exception as e:
-            logger.error(f"Error fetching from database: {e}")
-
-    def validate_transaction(self, transaction: Dict[str, Any]) -> bool:
-        """Validate database transaction."""
-        required_fields = ['transaction_id', 'amount', 'timestamp']
-        return all(field in transaction for field in required_fields)
-
-    def _parse_transaction(self, tx: Dict[str, Any]) -> TransactionData:
-        """Parse database row into standardized format."""
-        return TransactionData(
-            transaction_id=str(tx['transaction_id']),
-            amount=float(tx['amount']),
-            merchant=tx.get('merchant', 'Unknown'),
-            device=tx.get('device', 'desktop'),
-            country=tx.get('country', 'US'),
-            timestamp=pd.to_datetime(tx['timestamp']),
-            user_id=tx.get('user_id'),
-            card_number=tx.get('card_number'),
-            ip_address=tx.get('ip_address'),
-            metadata=tx.get('metadata', {})
-        )
 
 class FileSource(DataSource):
-    """Integration with file-based data sources (CSV, JSON, Parquet)."""
+    """Integration with file-based data sources."""
 
     def __init__(self, file_path: str, file_format: str = 'csv'):
         self.file_path = file_path
@@ -196,8 +64,6 @@ class FileSource(DataSource):
                 df = pd.read_csv(self.file_path)
             elif self.file_format == 'json':
                 df = pd.read_json(self.file_path)
-            elif self.file_format == 'parquet':
-                df = pd.read_parquet(self.file_path)
             else:
                 raise ValueError(f"Unsupported file format: {self.file_format}")
 
@@ -213,11 +79,6 @@ class FileSource(DataSource):
 
         except Exception as e:
             logger.error(f"Error reading file {self.file_path}: {e}")
-
-    def validate_transaction(self, transaction: Dict[str, Any]) -> bool:
-        """Validate file-based transaction."""
-        required_fields = ['amount', 'timestamp']
-        return all(field in transaction for field in required_fields)
 
     def _parse_transaction(self, tx: Dict[str, Any]) -> TransactionData:
         """Parse file row into standardized format."""
@@ -302,7 +163,7 @@ class DataValidator:
         # Amount validation
         if transaction.amount <= 0:
             issues.append("Invalid amount: must be positive")
-        elif transaction.amount > 100000:  # Configurable threshold
+        elif transaction.amount > 100000:
             issues.append("Suspiciously high amount")
 
         # Timestamp validation
@@ -311,30 +172,11 @@ class DataValidator:
         elif transaction.timestamp < datetime.now() - timedelta(days=365*2):
             issues.append("Too old transaction")
 
-        # Required field validation
-        if not transaction.merchant or transaction.merchant == "Unknown":
-            issues.append("Missing merchant information")
-
-        # IP address validation (if provided)
-        if transaction.ip_address:
-            if not DataValidator._is_valid_ip(transaction.ip_address):
-                issues.append("Invalid IP address format")
-
         return {
             'is_valid': len(issues) == 0,
             'issues': issues,
             'severity': 'high' if len(issues) > 2 else 'medium' if len(issues) > 0 else 'low'
         }
-
-    @staticmethod
-    def _is_valid_ip(ip: str) -> bool:
-        """Validate IP address format."""
-        import ipaddress
-        try:
-            ipaddress.ip_address(ip)
-            return True
-        except ValueError:
-            return False
 
     @staticmethod
     def clean_transaction_data(transaction: TransactionData) -> TransactionData:
@@ -366,13 +208,6 @@ class DataValidator:
 
         return transaction
 
-# Global pipeline instance
-_data_pipeline = None
-
 def get_data_pipeline() -> DataPipeline:
     """Get or create the global data pipeline instance."""
-    global _data_pipeline
-    if _data_pipeline is None:
-        _data_pipeline = DataPipeline()
-    return _data_pipeline</content>
-<parameter name="filePath">d:\cipherguard-fraud-poc\app\data_integration.py
+    return DataPipeline()

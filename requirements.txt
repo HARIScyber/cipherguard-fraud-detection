@@ -48,3 +48,10 @@ python-dotenv==1.0.0
 
 # Monitoring
 python-json-logger==2.0.7
+
+# Enterprise Features (Phase 6)
+PyJWT==2.8.0
+aiohttp==3.9.1
+stripe==7.0.0
+squareup==0.0.1
+requests==2.31.0

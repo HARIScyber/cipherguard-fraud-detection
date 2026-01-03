@@ -5,8 +5,9 @@
 # Global configuration
 global:
   environment: production
-  imageRegistry: ""
+  imageRegistry: "your-registry.com"
   imagePullSecrets: []
+  domain: "cipherguard.yourdomain.com"
 
 # API Gateway configuration
 api:
@@ -16,8 +17,186 @@ api:
     tag: "latest"
     pullPolicy: IfNotPresent
   service:
-    type: LoadBalancer
+    type: ClusterIP
     port: 80
+    targetPort: 8000
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      cert-manager.io/cluster-issuer: "letsencrypt-prod"
+      nginx.ingress.kubernetes.io/rate-limit: "100"
+      nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+      nginx.ingress.kubernetes.io/ssl-redirect: "true"
+      nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 2000
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+      - ALL
+  env:
+    - name: ENVIRONMENT
+      value: "production"
+    - name: LOG_LEVEL
+      value: "INFO"
+    - name: JWT_SECRET_KEY
+      valueFrom:
+        secretKeyRef:
+          name: cipherguard-secrets
+          key: jwt-secret
+    - name: DATABASE_URL
+      valueFrom:
+        secretKeyRef:
+          name: cipherguard-secrets
+          key: database-url
+    - name: REDIS_URL
+      valueFrom:
+        secretKeyRef:
+          name: cipherguard-secrets
+          key: redis-url
+
+# Fraud Detection Service configuration
+fraudDetection:
+  replicaCount: 2
+  image:
+    repository: cipherguard/fraud-detection
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8000
+    targetPort: 8000
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+    requests:
+      cpu: 1000m
+      memory: 2Gi
+  autoscaling:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 75
+    targetMemoryUtilizationPercentage: 85
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+      - ALL
+  env:
+    - name: MODEL_PATH
+      value: "/models"
+    - name: CUDA_VISIBLE_DEVICES
+      value: "0"
+
+# Ingestion Service configuration
+ingestion:
+  replicaCount: 2
+  image:
+    repository: cipherguard/ingestion
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8000
+    targetPort: 8000
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+  autoscaling:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+  securityContext:
+    allowPrivilegeEscalation: false
+  env:
+    - name: KAFKA_BROKERS
+      valueFrom:
+        configMapKeyRef:
+          name: cipherguard-config
+          key: kafka-brokers
+    - name: BATCH_SIZE
+      value: "1000"
+
+# Embedding Service configuration
+embedding:
+  replicaCount: 2
+  image:
+    repository: cipherguard/embedding
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8000
+    targetPort: 8000
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 8Gi
+    requests:
+      cpu: 1000m
+      memory: 4Gi
+  autoscaling:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 85
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+  securityContext:
+    allowPrivilegeEscalation: false
+  env:
+    - name: VECTOR_DIMENSION
+      value: "384"
+    - name: BATCH_SIZE
+      value: "32"
+
+# Alert Service configuration
+alert:
+  replicaCount: 1
+  image:
+    repository: cipherguard/alert
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8000
     targetPort: 8000
   resources:
     limits:
@@ -26,9 +205,117 @@ api:
     requests:
       cpu: 250m
       memory: 512Mi
-  nodeSelector: {}
-  tolerations: []
-  affinity: {}
+  autoscaling:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 4
+    targetCPUUtilizationPercentage: 60
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+  securityContext:
+    allowPrivilegeEscalation: false
+  env:
+    - name: SMTP_SERVER
+      valueFrom:
+        secretKeyRef:
+          name: cipherguard-secrets
+          key: smtp-server
+    - name: ALERT_EMAIL_FROM
+      valueFrom:
+        secretKeyRef:
+          name: cipherguard-secrets
+          key: alert-email-from
+
+# Database configuration
+postgresql:
+  enabled: true
+  auth:
+    postgresPassword: "change-me-in-production"
+    database: "fraud_detection"
+  architecture: replication
+  primary:
+    resources:
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+      requests:
+        cpu: 500m
+        memory: 1Gi
+  metrics:
+    enabled: true
+
+# Redis configuration
+redis:
+  enabled: true
+  auth:
+    password: "change-me-in-production"
+  architecture: replication
+  master:
+    resources:
+      limits:
+        cpu: 500m
+        memory: 1Gi
+      requests:
+        cpu: 250m
+        memory: 512Mi
+  metrics:
+    enabled: true
+
+# Monitoring configuration
+monitoring:
+  prometheus:
+    enabled: true
+    server:
+      resources:
+        limits:
+          cpu: 500m
+          memory: 1Gi
+        requests:
+          cpu: 250m
+          memory: 512Mi
+  grafana:
+    enabled: true
+    adminPassword: "change-me-in-production"
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 250m
+        memory: 256Mi
+
+# Security configuration
+security:
+  networkPolicies:
+    enabled: true
+  podSecurityStandards:
+    enabled: true
+  secrets:
+    jwtSecret: "generate-strong-secret-in-production"
+    databaseUrl: "postgresql://user:pass@postgres:5432/fraud_detection"
+    redisUrl: "redis://redis:6379"
+    smtpServer: "smtp.gmail.com:587"
+    alertEmailFrom: "alerts@cipherguard.yourdomain.com"
+
+# Backup configuration
+backup:
+  enabled: true
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  retention: 30
+  database:
+    enabled: true
+  logs:
+    enabled: true
+
+# Logging configuration
+logging:
+  level: "INFO"
+  format: "json"
+  outputs:
+    - stdout
+    - file
+  retention: 30
 
 # Fraud Detection Service configuration
 fraudDetection:
