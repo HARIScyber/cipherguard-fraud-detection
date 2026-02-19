@@ -1,0 +1,28 @@
+{
+  "timestamp": "2026-02-19T14:12:37.787249",
+  "passed": 0,
+  "total": 5,
+  "percentage": 0.0,
+  "checks": {
+    "Security Headers": {
+      "passed": false,
+      "message": "Missing security headers: ['X-Content-Type-Options', 'X-Frame-Options', 'X-XSS-Protection', 'Strict-Transport-Security']"
+    },
+    "Rate Limiting": {
+      "passed": false,
+      "message": "No rate limiting headers detected"
+    },
+    "Input Validation": {
+      "passed": false,
+      "message": "Invalid input accepted (status: 500)"
+    },
+    "API Performance": {
+      "passed": false,
+      "message": "API error: 500"
+    },
+    "Health Endpoint": {
+      "passed": false,
+      "message": "Basic health endpoint (missing: ['version'])"
+    }
+  }
+}

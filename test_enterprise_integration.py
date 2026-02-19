@@ -89,7 +89,7 @@ async def test_enterprise_features():
     print(f"\nOverall Status: {working_features}/{total_features} features working")
 
     if working_features == total_features:
-        print("🎉 All enterprise features successfully integrated!")
+        print(" All enterprise features successfully integrated!")
         return True
     else:
         print("⚠️ Some enterprise features require dependency installation")

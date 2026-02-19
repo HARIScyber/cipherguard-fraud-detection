@@ -17,8 +17,15 @@ import numpy as np
 # Additional imports
 from sklearn.ensemble import IsolationForest
 from .feature_extraction import extract_transaction_vector
+import joblib
+import numpy as np
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Model paths
+MODEL_DIR = Path("models")
+ISOLATION_FOREST_PATH = MODEL_DIR / "isolation_forest.joblib"
 
 # Phase 4: Production Deployment imports (optional)
 try:
@@ -300,6 +307,144 @@ async def check_service_health(service_name: str, url: str) -> str:
         return "unreachable"
 
 
+# ============ Model Management Functions ============
+
+def generate_training_data(n_samples: int = 1000) -> np.ndarray:
+    """Generate synthetic training data for IsolationForest."""
+    logger.info(f"Generating {n_samples} synthetic training samples...")
+    
+    # Import here to avoid circular imports
+    from .feature_extraction import FeatureExtractor
+    
+    extractor = FeatureExtractor()
+    training_data = []
+    
+    # Generate diverse transaction samples
+    merchants = ["Amazon", "Walmart", "Apple", "Google", "Target", "Best Buy", "Unknown"]
+    devices = ["mobile", "desktop", "tablet"]
+    countries = ["US", "UK", "CA", "AU", "FR", "DE", "Other"]
+    
+    for _ in range(n_samples):
+        # Generate realistic transaction parameters
+        amount = np.random.lognormal(mean=4.0, sigma=1.5)  # Log-normal distribution for amounts
+        merchant = np.random.choice(merchants)
+        device = np.random.choice(devices)
+        country = np.random.choice(countries)
+        
+        # Create transaction dict
+        transaction = {
+            "amount": float(amount),
+            "merchant": merchant,
+            "device": device,
+            "country": country,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        # Extract features
+        features = extractor.extract_features(transaction)
+        training_data.append(features)
+    
+    training_array = np.array(training_data)
+    logger.info(f"Training data shape: {training_array.shape}")
+    return training_array
+
+
+def load_saved_model() -> Optional[IsolationForest]:
+    """Load pre-trained IsolationForest model from disk."""
+    try:
+        if ISOLATION_FOREST_PATH.exists():
+            logger.info(f"Loading existing model from {ISOLATION_FOREST_PATH}")
+            model = joblib.load(ISOLATION_FOREST_PATH)
+            
+            # Verify the model is trained
+            if hasattr(model, 'decision_function'):
+                logger.info("✅ Pre-trained model loaded successfully")
+                return model
+            else:
+                logger.warning("Loaded model appears to be untrained")
+                return None
+        else:
+            logger.info("No existing model found")
+            return None
+    except Exception as e:
+        logger.error(f"Error loading saved model: {e}")
+        return None
+
+
+def train_isolation_forest(training_data: np.ndarray) -> IsolationForest:
+    """Train IsolationForest model with provided data."""
+    logger.info("Training new IsolationForest model...")
+    
+    model = IsolationForest(
+        contamination=0.1,  # Expect 10% anomalies
+        random_state=42,
+        n_jobs=-1,  # Use all available CPU cores
+        verbose=1
+    )
+    
+    # Train the model
+    start_time = time.time()
+    model.fit(training_data)
+    training_time = time.time() - start_time
+    
+    logger.info(f"✅ Model trained successfully in {training_time:.2f} seconds")
+    
+    # Validate the model
+    test_predictions = model.predict(training_data[:100])  # Test on first 100 samples
+    anomaly_count = np.sum(test_predictions == -1)
+    logger.info(f"Model validation - Detected {anomaly_count}/100 anomalies in training data")
+    
+    return model
+
+
+def save_model(model: IsolationForest) -> bool:
+    """Save trained model to disk."""
+    try:
+        # Create models directory if it doesn't exist
+        MODEL_DIR.mkdir(exist_ok=True)
+        
+        logger.info(f"Saving model to {ISOLATION_FOREST_PATH}")
+        joblib.dump(model, ISOLATION_FOREST_PATH)
+        
+        # Verify the save
+        file_size = ISOLATION_FOREST_PATH.stat().st_size / 1024  # Size in KB
+        logger.info(f"✅ Model saved successfully ({file_size:.1f} KB)")
+        return True
+    except Exception as e:
+        logger.error(f"Error saving model: {e}")
+        return False
+
+
+async def load_or_train_isolation_forest() -> Optional[IsolationForest]:
+    """Load existing model or train new one if needed."""
+    
+    # Try to load existing model first
+    model = load_saved_model()
+    if model is not None:
+        return model
+    
+    # No existing model - train a new one
+    logger.info("No trained model found. Training new IsolationForest...")
+    
+    try:
+        # Generate training data
+        training_data = generate_training_data(n_samples=2000)
+        
+        # Train the model
+        model = train_isolation_forest(training_data)
+        
+        # Save for future use
+        save_success = save_model(model)
+        if not save_success:
+            logger.warning("Model training succeeded but saving failed")
+        
+        return model
+        
+    except Exception as e:
+        logger.error(f"Model training failed: {e}")
+        return None
+
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize application on startup."""
@@ -321,12 +466,12 @@ async def startup_event():
             cyborg_client = None
             use_sdk = False
     
-    # Initialize Isolation Forest
+    # Initialize and train Isolation Forest model
     try:
-        isolation_forest = IsolationForest(contamination=0.1, random_state=42)
-        logger.info("Isolation Forest model initialized")
+        isolation_forest = await load_or_train_isolation_forest()
+        logger.info("Isolation Forest model ready for predictions")
     except Exception as e:
-        logger.warning(f"Isolation Forest initialization failed: {e}")
+        logger.error(f"Isolation Forest initialization failed: {e}")
         isolation_forest = None
     
     # Initialize Phase 5 components
@@ -357,11 +502,19 @@ async def shutdown_event():
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
+    """Enhanced health check endpoint with model status."""
+    model_status = "trained" if (isolation_forest is not None) else "not_available"
+    model_file_exists = ISOLATION_FOREST_PATH.exists()
+    
     return {
         "status": "operational",
         "message": "CipherGuard Fraud Detection API is running",
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.utcnow().isoformat(),
+        "model_status": {
+            "isolation_forest": model_status,
+            "model_file_exists": model_file_exists,
+            "model_path": str(ISOLATION_FOREST_PATH)
+        }
     }
 
 
@@ -391,13 +544,36 @@ async def detect_fraud(transaction: Transaction):
             knn_results = cyborg_shim.search(vector, k=5)
             similar_ids = [tid for tid, _ in knn_results]
         
-        # Calculate fraud score
+        # Calculate fraud score using trained model
         if isolation_forest is not None:
-            vector_2d = vector.reshape(1, -1)
-            anomaly_pred = isolation_forest.predict(vector_2d)[0]
-            anomaly_score = 1.0 if anomaly_pred == -1 else 0.2
+            try:
+                vector_2d = vector.reshape(1, -1)
+                # Use decision_function for better scoring (returns anomaly score)
+                anomaly_decision = isolation_forest.decision_function(vector_2d)[0] 
+                
+                # Convert decision function output to probability [0, 1]
+                # Decision function: negative = anomaly, positive = normal
+                # Convert to 0-1 scale where 1 = high fraud probability
+                anomaly_score = max(0.0, min(1.0, (0.5 - anomaly_decision) * 2))
+                
+                # Also get the binary prediction for validation
+                anomaly_pred = isolation_forest.predict(vector_2d)[0]
+                is_anomaly = (anomaly_pred == -1)
+                
+                logger.debug(f"Model decision: {anomaly_decision:.3f}, "
+                           f"Binary prediction: {anomaly_pred}, "
+                           f"Anomaly score: {anomaly_score:.3f}")
+                
+            except Exception as e:
+                logger.error(f"Error during model prediction: {e}")
+                # Fallback to rule-based scoring
+                anomaly_score = 0.5
         else:
-            anomaly_score = 0.5
+            logger.warning("IsolationForest model not available, using rule-based fallback")
+            # Enhanced rule-based scoring when model is unavailable
+            amount_risk = min(0.4, transaction.amount / 10000)  # Scale by amount
+            merchant_risk = 0.3 if transaction.merchant.lower() == "unknown" else 0.1
+            anomaly_score = amount_risk + merchant_risk
         
         # Simple fraud score calculation
         base_score = anomaly_score
@@ -497,6 +673,76 @@ async def get_stats():
 
     except Exception as e:
         logger.error(f"Error getting stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/models/retrain")
+async def retrain_model():
+    """Retrain the IsolationForest model with new data."""
+    global isolation_forest
+    
+    try:
+        logger.info("Manual model retraining requested")
+        
+        # Generate new training data
+        training_data = generate_training_data(n_samples=2000)
+        
+        # Train new model
+        new_model = train_isolation_forest(training_data)
+        
+        # Save the new model
+        save_success = save_model(new_model)
+        
+        if save_success:
+            # Replace the global model
+            isolation_forest = new_model
+            logger.info("✅ Model retrained and replaced successfully")
+            
+            return {
+                "status": "success",
+                "message": "Model retrained successfully",
+                "timestamp": datetime.utcnow().isoformat(),
+                "training_samples": len(training_data)
+            }
+        else:
+            return {
+                "status": "partial_success", 
+                "message": "Model retrained but saving failed",
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+    except Exception as e:
+        logger.error(f"Model retraining failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Model retraining failed: {str(e)}")
+
+
+@app.get("/models/status")
+async def get_model_status():
+    """Get detailed model information and statistics."""
+    try:
+        model_info = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "isolation_forest": {
+                "loaded": isolation_forest is not None,
+                "file_exists": ISOLATION_FOREST_PATH.exists(),
+                "file_path": str(ISOLATION_FOREST_PATH)
+            }
+        }
+        
+        if ISOLATION_FOREST_PATH.exists():
+            stat = ISOLATION_FOREST_PATH.stat()
+            model_info["isolation_forest"]["file_size_kb"] = round(stat.st_size / 1024, 2)
+            model_info["isolation_forest"]["last_modified"] = datetime.fromtimestamp(stat.st_mtime).isoformat()
+        
+        if isolation_forest is not None:
+            model_info["isolation_forest"]["contamination"] = isolation_forest.contamination
+            model_info["isolation_forest"]["n_estimators"] = isolation_forest.n_estimators
+            model_info["isolation_forest"]["random_state"] = isolation_forest.random_state
+        
+        return model_info
+        
+    except Exception as e:
+        logger.error(f"Error getting model status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

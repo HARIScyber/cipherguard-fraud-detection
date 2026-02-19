@@ -9,8 +9,6 @@ httpx==0.25.2
 # CyborgDB
 cyborgdb==0.14.0
 
-
-
 # Kafka Streaming (Phase 2: Secure Data Pipeline)
 kafka-python==2.0.2
 
