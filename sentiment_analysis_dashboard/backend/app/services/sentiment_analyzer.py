@@ -48,7 +48,16 @@ class SentimentAnalyzer:
         
     async def load_model(self) -> bool:
         """
-        Load the trained sentiment analysis model.
+        Load the trained sentiment analysis model (async version).
+        
+        Returns:
+            True if model loaded successfully, False otherwise
+        """
+        return self.load_model_sync()
+    
+    def load_model_sync(self) -> bool:
+        """
+        Load the trained sentiment analysis model (synchronous version).
         
         Returns:
             True if model loaded successfully, False otherwise
@@ -68,7 +77,7 @@ class SentimentAnalyzer:
                 return True
             else:
                 logger.warning(f"Model file not found at {self.model_path}, creating new model")
-                await self.train_default_model()
+                self.train_default_model_sync()
                 return True
                 
         except Exception as e:
@@ -145,9 +154,9 @@ class SentimentAnalyzer:
             # Return neutral sentiment with low confidence as fallback
             return "neutral", 0.5
     
-    async def train_default_model(self) -> bool:
+    def train_default_model_sync(self) -> bool:
         """
-        Train a default sentiment analysis model with sample data.
+        Train a default sentiment analysis model with sample data (synchronous version).
         
         Returns:
             True if training successful, False otherwise
@@ -258,3 +267,46 @@ class SentimentAnalyzer:
             'model_path': self.model_path,
             'model_type': 'TF-IDF + Logistic Regression'
         }
+    
+    async def train_default_model(self) -> bool:
+        """Async wrapper for train_default_model_sync."""
+        return self.train_default_model_sync()
+    
+    def predict_sentiment_sync(self, text: str) -> Tuple[str, float]:
+        """
+        Predict sentiment for a given text (synchronous version).
+        
+        Args:
+            text: Text to analyze
+            
+        Returns:
+            Tuple of (sentiment, confidence_score)
+        """
+        if not self.is_loaded or self.pipeline is None:
+            raise RuntimeError("Model not loaded. Call load_model() first.")
+        
+        try:
+            start_time = time.time()
+            
+            # Preprocess text
+            processed_text = self.preprocess_text(text)
+            
+            # Get prediction and probabilities
+            prediction = self.pipeline.predict([processed_text])[0]
+            probabilities = self.pipeline.predict_proba([processed_text])[0]
+            
+            # Get confidence score (max probability)
+            confidence = float(max(probabilities))
+            
+            # Map prediction to label
+            sentiment_map = {0: 'negative', 1: 'neutral', 2: 'positive'}
+            sentiment = sentiment_map.get(prediction, 'neutral')
+            
+            processing_time = (time.time() - start_time) * 1000
+            logger.debug(f"Sentiment prediction: {sentiment} ({confidence:.3f}) in {processing_time:.2f}ms")
+            
+            return sentiment, confidence
+            
+        except Exception as e:
+            logger.error(f"Sentiment prediction failed: {e}")
+            return "neutral", 0.5

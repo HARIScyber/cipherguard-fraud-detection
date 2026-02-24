@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 import json
 import time
+import os
 
 # Page configuration
 st.set_page_config(
@@ -22,7 +23,7 @@ st.set_page_config(
 )
 
 # Configuration
-API_BASE_URL = "http://localhost:8000/api/v1"
+API_BASE_URL = os.getenv("API_BASE_URL", "http://backend:8000/api/v1")
 
 # Custom CSS for better UI
 st.markdown("""

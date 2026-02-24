@@ -15,6 +15,7 @@ from .database import engine, get_db
 from .models import Base
 from .routes.comments import router as comments_router
 from .routes.health import router as health_router
+from .routes.auth import router as auth_router
 from .services.sentiment_analyzer import SentimentAnalyzer
 
 # Configure logging
@@ -100,6 +101,7 @@ app.add_middleware(
 )
 
 # Include routers
+app.include_router(auth_router, prefix="/api/v1", tags=["Authentication"])
 app.include_router(comments_router, prefix="/api/v1", tags=["Comments"])
 app.include_router(health_router, prefix="/api", tags=["Health"])
 

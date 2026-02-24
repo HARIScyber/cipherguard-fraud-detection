@@ -4,9 +4,30 @@ Defines data models for API endpoints with validation and serialization.
 """
 
 from pydantic import BaseModel, Field, validator
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Generic, TypeVar
 from datetime import datetime
 from enum import Enum
+
+
+T = TypeVar('T')
+
+
+class APIResponse(BaseModel, Generic[T]):
+    """Generic API response wrapper."""
+    success: bool = Field(..., description="Operation success status")
+    message: str = Field(..., description="Response message")
+    data: Optional[T] = Field(None, description="Response data")
+    error: Optional[str] = Field(None, description="Error message if failed")
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "success": True,
+                "message": "Operation completed successfully",
+                "data": {"key": "value"},
+                "error": None
+            }
+        }
 
 
 class SentimentType(str, Enum):
@@ -49,7 +70,7 @@ class CommentAnalysisResponse(BaseModel):
     comment_text: str = Field(..., description="Original comment text")
     sentiment: SentimentType = Field(..., description="Predicted sentiment")
     confidence_score: float = Field(..., ge=0.0, le=1.0, description="Confidence score (0-1)")
-    timestamp: datetime = Field(..., description="Analysis timestamp")
+    created_at: datetime = Field(..., description="Analysis timestamp")
     processing_time_ms: Optional[float] = Field(None, description="Processing time in milliseconds")
     
     class Config:
@@ -61,7 +82,7 @@ class CommentAnalysisResponse(BaseModel):
                 "comment_text": "This product is absolutely amazing! I love it so much.",
                 "sentiment": "positive",
                 "confidence_score": 0.95,
-                "timestamp": "2024-01-01T12:00:00Z",
+                "created_at": "2024-01-01T12:00:00Z",
                 "processing_time_ms": 45.2
             }
         }
@@ -92,6 +113,52 @@ class CommentListResponse(BaseModel):
                 "page": 1,
                 "page_size": 10,
                 "total_pages": 10
+            }
+        }
+
+
+class CommentResponse(BaseModel):
+    """Simple comment response schema for basic comment data."""
+    id: int = Field(..., description="Comment ID")
+    user_id: str = Field(..., description="User identifier")
+    comment_text: str = Field(..., description="Comment content")
+    sentiment: SentimentType = Field(..., description="Sentiment classification")
+    confidence_score: float = Field(..., description="Confidence score (0-1)")
+    created_at: datetime = Field(..., description="Creation timestamp")
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "id": 1,
+                "user_id": "user123",
+                "comment_text": "This is a great product!",
+                "sentiment": "positive",
+                "confidence_score": 0.95,
+                "created_at": "2024-01-01T12:00:00Z"
+            }
+        }
+
+
+class PaginatedResponse(BaseModel, Generic[T]):
+    """Generic paginated response wrapper."""
+    items: List[T] = Field(..., description="List of items")
+    total: int = Field(..., description="Total number of items")
+    page: int = Field(..., description="Current page number")
+    page_size: int = Field(..., description="Items per page")
+    total_pages: int = Field(..., description="Total number of pages")
+    has_next: bool = Field(..., description="Whether there's a next page")
+    has_prev: bool = Field(..., description="Whether there's a previous page")
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "items": [],
+                "total": 100,
+                "page": 1,
+                "page_size": 10,
+                "total_pages": 10,
+                "has_next": True,
+                "has_prev": False
             }
         }
 
@@ -161,6 +228,32 @@ class HealthCheckResponse(BaseModel):
         }
 
 
+class SystemHealth(BaseModel):
+    """Schema for detailed system health information."""
+    database_connected: bool = Field(..., description="Database connection status")
+    database_latency_ms: float = Field(..., description="Database response time in milliseconds")
+    model_loaded: bool = Field(..., description="ML model availability status")
+    memory_usage_mb: float = Field(..., description="Memory usage in MB")
+    cpu_usage_percent: float = Field(..., description="CPU usage percentage")
+    disk_usage_percent: float = Field(..., description="Disk usage percentage")
+    uptime_seconds: float = Field(..., description="System uptime in seconds")
+    active_connections: int = Field(..., description="Number of active connections")
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "database_connected": True,
+                "database_latency_ms": 15.2,
+                "model_loaded": True,
+                "memory_usage_mb": 512.5,
+                "cpu_usage_percent": 25.3,
+                "disk_usage_percent": 45.8,
+                "uptime_seconds": 3600.0,
+                "active_connections": 12
+            }
+        }
+
+
 class ErrorResponse(BaseModel):
     """Schema for error responses."""
     detail: str = Field(..., description="Error message")
@@ -189,6 +282,20 @@ class UserCreate(BaseModel):
         if '@' not in v:
             raise ValueError('Invalid email format')
         return v.lower()
+
+
+class UserLogin(BaseModel):
+    """Schema for user login."""
+    username: str = Field(..., min_length=1, max_length=100, description="Username or email")
+    password: str = Field(..., min_length=1, max_length=100, description="User password")
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "username": "admin",
+                "password": "your_password"
+            }
+        }
 
 
 class UserResponse(BaseModel):

@@ -51,8 +51,8 @@ class CommentService:
         try:
             start_time = time.time()
             
-            # Analyze sentiment
-            sentiment, confidence_score = await self.sentiment_analyzer.predict_sentiment(comment_text)
+            # Analyze sentiment (use sync version)
+            sentiment, confidence_score = self.sentiment_analyzer.predict_sentiment_sync(comment_text)
             
             processing_time = (time.time() - start_time) * 1000  # Convert to milliseconds
             

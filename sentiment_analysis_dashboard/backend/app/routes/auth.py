@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..schemas import (
-    Token, 
+    TokenResponse, 
     UserResponse, 
     UserCreate, 
     UserLogin,
@@ -21,7 +21,7 @@ from ..auth import (
     create_access_token, 
     get_current_user,
     verify_token,
-    hash_password
+    get_password_hash
 )
 from ..models import User
 
@@ -32,7 +32,7 @@ security = HTTPBearer()
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
-@router.post("/login", response_model=APIResponse[Token], summary="User Login")
+@router.post("/login", response_model=APIResponse[TokenResponse], summary="User Login")
 async def login_for_access_token(
     form_data: UserLogin,
     db: Session = Depends(get_db)
@@ -85,7 +85,7 @@ async def login_for_access_token(
         expires_delta=access_token_expires
     )
     
-    token_data = Token(
+    token_data = TokenResponse(
         access_token=access_token,
         token_type="bearer",
         expires_in=int(access_token_expires.total_seconds())
@@ -151,7 +151,7 @@ async def register_user(
         )
     
     # Create new user
-    hashed_password = hash_password(user_data.password)
+    hashed_password = get_password_hash(user_data.password)
     new_user = User(
         username=user_data.username,
         email=user_data.email,
@@ -301,7 +301,7 @@ async def verify_access_token(
         )
 
 
-@router.post("/refresh", response_model=APIResponse[Token], summary="Refresh Token")
+@router.post("/refresh", response_model=APIResponse[TokenResponse], summary="Refresh Token")
 async def refresh_access_token(
     current_user: User = Depends(get_current_user)
 ):
@@ -333,7 +333,7 @@ async def refresh_access_token(
         expires_delta=access_token_expires
     )
     
-    token_data = Token(
+    token_data = TokenResponse(
         access_token=access_token,
         token_type="bearer",
         expires_in=int(access_token_expires.total_seconds())

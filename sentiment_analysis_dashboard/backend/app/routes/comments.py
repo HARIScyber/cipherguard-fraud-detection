@@ -24,11 +24,24 @@ from ..services.sentiment_analyzer import SentimentAnalyzer
 # Router
 router = APIRouter(prefix="/comments", tags=["Comment Analysis"])
 
+# Global sentiment analyzer instance (will be set from main.py)
+_sentiment_analyzer: Optional[SentimentAnalyzer] = None
 
-def get_comment_service():
+
+def set_sentiment_analyzer(analyzer: SentimentAnalyzer):
+    """Set the global sentiment analyzer instance."""
+    global _sentiment_analyzer
+    _sentiment_analyzer = analyzer
+
+
+def get_comment_service() -> CommentService:
     """Dependency to get comment service instance."""
-    sentiment_analyzer = SentimentAnalyzer()
-    return CommentService(sentiment_analyzer)
+    global _sentiment_analyzer
+    if _sentiment_analyzer is None:
+        # Create and load model synchronously if not set
+        _sentiment_analyzer = SentimentAnalyzer()
+        _sentiment_analyzer.load_model_sync()
+    return CommentService(_sentiment_analyzer)
 
 
 @router.post(
