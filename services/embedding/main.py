@@ -18,9 +18,7 @@ import base64
 import json
 
 # Import shared feature extraction
-import sys
-sys.path.append('../../..')
-from app.feature_extraction import extract_transaction_vector
+from feature_extraction import extract_transaction_vector
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)

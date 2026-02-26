@@ -2,13 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Copy shared modules
-COPY ../../../app/feature_extraction.py /app/
-
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY main.py .
+COPY feature_extraction.py .
 
 RUN useradd --create-home --shell /bin/bash app \
     && chown -R app:app /app

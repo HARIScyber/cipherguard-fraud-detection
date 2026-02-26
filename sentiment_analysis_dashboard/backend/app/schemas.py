@@ -326,3 +326,209 @@ class TokenResponse(BaseModel):
                 "expires_in": 3600
             }
         }
+
+
+# ======================= FRAUD DETECTION SCHEMAS =======================
+
+class RiskLevel(str, Enum):
+    """Enumeration for fraud risk levels."""
+    CRITICAL = "CRITICAL"
+    HIGH = "HIGH"
+    MEDIUM = "MEDIUM"
+    LOW = "LOW"
+    VERY_LOW = "VERY_LOW"
+
+
+class FraudDetectionRequest(BaseModel):
+    """Request schema for fraud detection analysis."""
+    amount: float = Field(..., gt=0, description="Transaction amount")
+    merchant: str = Field(..., min_length=1, max_length=200, description="Merchant name")
+    device: str = Field(default="desktop", description="Device type (mobile, desktop, tablet)")
+    country: str = Field(default="US", max_length=10, description="Country code")
+    
+    # Customer info for alerts (optional)
+    customer_name: Optional[str] = Field(None, max_length=100, description="Customer name for alerts")
+    customer_email: Optional[str] = Field(None, max_length=200, description="Customer email for alerts")
+    customer_phone: Optional[str] = Field(None, max_length=20, description="Customer phone for SMS alerts")
+    send_alert: bool = Field(default=True, description="Whether to send alert if fraud detected")
+
+    @validator('merchant')
+    def validate_merchant(cls, v):
+        if not v.strip():
+            raise ValueError('Merchant cannot be empty')
+        return v.strip()
+    
+    @validator('device')
+    def validate_device(cls, v):
+        valid_devices = ["mobile", "desktop", "tablet"]
+        v = v.lower().strip()
+        if v not in valid_devices:
+            v = "desktop"  # Default to desktop
+        return v
+    
+    @validator('customer_email')
+    def validate_email(cls, v):
+        if v and '@' not in v:
+            raise ValueError('Invalid email format')
+        return v
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "amount": 150.00,
+                "merchant": "Amazon",
+                "device": "desktop",
+                "country": "US",
+                "customer_name": "John Doe",
+                "customer_email": "john@example.com",
+                "customer_phone": "+1234567890",
+                "send_alert": True
+            }
+        }
+
+
+class FraudDetectionResponse(BaseModel):
+    """Response schema for fraud detection analysis."""
+    transaction_id: str = Field(..., description="Unique transaction identifier")
+    amount: float = Field(..., description="Transaction amount")
+    merchant: str = Field(..., description="Merchant name")
+    device: str = Field(..., description="Device type")
+    country: str = Field(..., description="Country code")
+    is_fraud: bool = Field(..., description="Whether transaction is flagged as fraud")
+    fraud_score: float = Field(..., ge=0.0, le=1.0, description="Fraud probability score (0-1)")
+    risk_level: RiskLevel = Field(..., description="Risk classification level")
+    created_at: datetime = Field(..., description="Analysis timestamp")
+    model_version: Optional[str] = Field(None, description="ML model version used")
+    
+    # Alert information
+    alert_sent: bool = Field(default=False, description="Whether alert was sent to customer")
+    alert_channels: Optional[List[str]] = Field(None, description="Channels used for alert (sms, email, push)")
+
+    class Config:
+        from_attributes = True
+        schema_extra = {
+            "example": {
+                "transaction_id": "txn_1234567890",
+                "amount": 150.00,
+                "merchant": "Amazon",
+                "device": "desktop",
+                "country": "US",
+                "is_fraud": False,
+                "fraud_score": 0.15,
+                "risk_level": "LOW",
+                "created_at": "2026-02-25T12:00:00Z",
+                "model_version": "isolation_forest_v1",
+                "alert_sent": True,
+                "alert_channels": ["sms", "email"]
+            }
+        }
+
+
+class FraudListResponse(BaseModel):
+    """Response schema for listing fraud transactions."""
+    transactions: List[FraudDetectionResponse]
+    total_count: int
+    page: int
+    page_size: int
+    total_pages: int
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "transactions": [],
+                "total_count": 100,
+                "page": 1,
+                "page_size": 10,
+                "total_pages": 10
+            }
+        }
+
+
+class FraudAnalytics(BaseModel):
+    """Response schema for fraud analytics."""
+    total_transactions: int = Field(..., description="Total number of transactions analyzed")
+    fraud_count: int = Field(..., description="Number of fraudulent transactions")
+    legitimate_count: int = Field(..., description="Number of legitimate transactions")
+    fraud_rate: float = Field(..., description="Percentage of fraudulent transactions")
+    average_fraud_score: float = Field(..., description="Average fraud score")
+    risk_distribution: Dict[str, int] = Field(..., description="Distribution by risk level")
+    total_amount: float = Field(..., description="Total transaction amount")
+    fraud_amount: float = Field(..., description="Total fraud amount")
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "total_transactions": 1000,
+                "fraud_count": 50,
+                "legitimate_count": 950,
+                "fraud_rate": 5.0,
+                "average_fraud_score": 0.25,
+                "risk_distribution": {"CRITICAL": 10, "HIGH": 20, "MEDIUM": 100, "LOW": 500, "VERY_LOW": 370},
+                "total_amount": 150000.00,
+                "fraud_amount": 25000.00
+            }
+        }
+
+
+# ======================= CUSTOMER ALERT SCHEMAS =======================
+
+class AlertChannel(str, Enum):
+    """Alert notification channels."""
+    SMS = "sms"
+    EMAIL = "email"
+    PUSH = "push"
+    ALL = "all"
+
+
+class AlertType(str, Enum):
+    """Types of fraud alerts."""
+    SUSPICIOUS_TRANSACTION = "suspicious_transaction"
+    HIGH_AMOUNT = "high_amount"
+    UNUSUAL_LOCATION = "unusual_location"
+    BLOCKED_TRANSACTION = "blocked_transaction"
+
+
+class AlertResponse(BaseModel):
+    """Response schema for alert notification."""
+    alert_id: str = Field(..., description="Unique alert identifier")
+    transaction_id: str = Field(..., description="Related transaction ID")
+    customer_email: Optional[str] = Field(None, description="Customer email")
+    customer_phone: Optional[str] = Field(None, description="Customer phone")
+    alert_type: str = Field(..., description="Type of alert sent")
+    channels_used: List[str] = Field(..., description="Notification channels used")
+    timestamp: datetime = Field(..., description="Alert timestamp")
+    
+    class Config:
+        schema_extra = {
+            "example": {
+                "alert_id": "alert_1234567890",
+                "transaction_id": "txn_1234567890",
+                "customer_email": "john@example.com",
+                "customer_phone": "+1234567890",
+                "alert_type": "suspicious_transaction",
+                "channels_used": ["sms", "email"],
+                "timestamp": "2026-02-25T12:00:00Z"
+            }
+        }
+
+
+class AlertHistoryResponse(BaseModel):
+    """Response schema for alert history."""
+    alerts: List[AlertResponse]
+    total_count: int
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "alerts": [],
+                "total_count": 0
+            }
+        }
+
+
+class AlertStats(BaseModel):
+    """Response schema for alert statistics."""
+    total_alerts: int = Field(..., description="Total alerts sent")
+    by_type: Dict[str, int] = Field(..., description="Alerts by type")
+    by_channel: Dict[str, int] = Field(..., description="Alerts by channel")
+    success_rate: float = Field(..., description="Alert delivery success rate")

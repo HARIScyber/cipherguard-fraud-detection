@@ -16,7 +16,9 @@ from .models import Base
 from .routes.comments import router as comments_router
 from .routes.health import router as health_router
 from .routes.auth import router as auth_router
+from .routes.fraud import router as fraud_router
 from .services.sentiment_analyzer import SentimentAnalyzer
+from .services.fraud_detector import get_fraud_detector
 
 # Configure logging
 logging.basicConfig(
@@ -51,6 +53,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to load ML model: {e}")
         raise
+    
+    # Initialize fraud detector
+    try:
+        fraud_detector = get_fraud_detector()
+        await fraud_detector.load_model()
+        logger.info("Fraud detection model loaded successfully")
+    except Exception as e:
+        logger.warning(f"Fraud detector using rule-based mode: {e}")
     
     logger.info("Application startup completed")
     yield
@@ -103,6 +113,7 @@ app.add_middleware(
 # Include routers
 app.include_router(auth_router, prefix="/api/v1", tags=["Authentication"])
 app.include_router(comments_router, prefix="/api/v1", tags=["Comments"])
+app.include_router(fraud_router, prefix="/api/v1", tags=["Fraud Detection"])
 app.include_router(health_router, prefix="/api", tags=["Health"])
 
 # Root endpoint

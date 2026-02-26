@@ -107,3 +107,91 @@ class SystemMetrics(Base):
     
     def __repr__(self):
         return f"<SystemMetrics(name='{self.metric_name}', value={self.metric_value})>"
+
+
+class FraudTransaction(Base):
+    """
+    Fraud transaction model to store analyzed transactions with fraud predictions.
+    """
+    __tablename__ = "fraud_transactions"
+    
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    transaction_id = Column(String(100), unique=True, nullable=False, index=True)
+    
+    # Transaction details
+    amount = Column(Float, nullable=False)
+    merchant = Column(String(200), nullable=False)
+    device = Column(String(50), nullable=False)
+    country = Column(String(10), nullable=False)
+    
+    # Customer info (for alerts)
+    customer_name = Column(String(100), nullable=True)
+    customer_email = Column(String(200), nullable=True)
+    customer_phone = Column(String(20), nullable=True)
+    
+    # Fraud detection results
+    is_fraud = Column(Boolean, nullable=False, index=True)
+    fraud_score = Column(Float, nullable=False)
+    risk_level = Column(String(20), nullable=False, index=True)  # CRITICAL, HIGH, MEDIUM, LOW, VERY_LOW
+    
+    # Alert status
+    alert_sent = Column(Boolean, default=False)
+    alert_channels = Column(String(100), nullable=True)  # Comma-separated: sms,email,push
+    
+    # Model information
+    model_version = Column(String(50), default="isolation_forest_v1")
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    
+    # Indexes for performance
+    __table_args__ = (
+        Index("idx_fraud_risk", "is_fraud", "risk_level"),
+        Index("idx_fraud_created", "created_at", "is_fraud"),
+        Index("idx_fraud_amount", "amount", "is_fraud"),
+    )
+    
+    def __repr__(self):
+        return f"<FraudTransaction(id={self.transaction_id}, is_fraud={self.is_fraud}, risk_level='{self.risk_level}')>"
+
+
+class CustomerAlert(Base):
+    """
+    Customer alert model to store notification history.
+    """
+    __tablename__ = "customer_alerts"
+    
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    alert_id = Column(String(100), unique=True, nullable=False, index=True)
+    transaction_id = Column(String(100), nullable=False, index=True)
+    
+    # Customer info
+    customer_name = Column(String(100), nullable=True)
+    customer_email = Column(String(200), nullable=True)
+    customer_phone = Column(String(20), nullable=True)
+    
+    # Alert details
+    alert_type = Column(String(50), nullable=False)  # suspicious_transaction, high_amount, etc.
+    channels_used = Column(String(100), nullable=False)  # sms,email,push
+    
+    # Message content (for audit)
+    sms_message = Column(Text, nullable=True)
+    email_subject = Column(String(200), nullable=True)
+    
+    # Delivery status
+    sms_status = Column(String(20), default="pending")  # sent, failed, skipped
+    email_status = Column(String(20), default="pending")
+    push_status = Column(String(20), default="pending")
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    
+    # Indexes
+    __table_args__ = (
+        Index("idx_alert_transaction", "transaction_id"),
+        Index("idx_alert_created", "created_at"),
+        Index("idx_alert_type", "alert_type"),
+    )
+    
+    def __repr__(self):
+        return f"<CustomerAlert(id={self.alert_id}, type='{self.alert_type}', transaction={self.transaction_id})>"
