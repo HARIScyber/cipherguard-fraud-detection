@@ -41,6 +41,12 @@ services:
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
       ADMIN_FULL_NAME: ${ADMIN_FULL_NAME:-System Administrator}
+      # Real-time Alert Services (leave empty for simulation mode)
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER:-}
+      SENDGRID_API_KEY: ${SENDGRID_API_KEY:-}
+      SENDGRID_SENDER_EMAIL: ${SENDGRID_SENDER_EMAIL:-alerts@cipherguard.com}
     ports:
       - "8000:8000"
     volumes:

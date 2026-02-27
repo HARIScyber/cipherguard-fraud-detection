@@ -1,15 +1,30 @@
 """
 Customer Alert Notification Service
 Sends real-time alerts to customers when suspicious transactions are detected.
-Supports SMS, Email, and Push notifications (simulated for demo).
+Supports SMS (Twilio), Email (SendGrid), and Push notifications.
 """
 
 import logging
+import os
 import time
 from datetime import datetime
 from typing import Dict, Optional, List
 from enum import Enum
 import json
+
+# Import real notification libraries
+try:
+    from twilio.rest import Client as TwilioClient
+    TWILIO_AVAILABLE = True
+except ImportError:
+    TWILIO_AVAILABLE = False
+    
+try:
+    from sendgrid import SendGridAPIClient
+    from sendgrid.helpers.mail import Mail, Email, To, Content
+    SENDGRID_AVAILABLE = True
+except ImportError:
+    SENDGRID_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -34,16 +49,47 @@ class AlertType(str, Enum):
 class AlertService:
     """
     Service for sending real-time alerts to customers about suspicious transactions.
-    In production, this would integrate with:
+    Integrates with:
     - Twilio for SMS
-    - SendGrid/AWS SES for Email
-    - Firebase/APNs for Push notifications
+    - SendGrid for Email
+    - Firebase/APNs for Push notifications (simulated)
     """
     
     def __init__(self):
-        """Initialize the alert service."""
+        """Initialize the alert service with real notification providers."""
         self.alerts_sent: List[Dict] = []
         self.alert_templates = self._load_templates()
+        
+        # Initialize Twilio SMS client
+        self.twilio_client = None
+        self.twilio_phone = None
+        twilio_sid = os.environ.get("TWILIO_ACCOUNT_SID")
+        twilio_token = os.environ.get("TWILIO_AUTH_TOKEN")
+        self.twilio_phone = os.environ.get("TWILIO_PHONE_NUMBER")
+        
+        if TWILIO_AVAILABLE and twilio_sid and twilio_token:
+            try:
+                self.twilio_client = TwilioClient(twilio_sid, twilio_token)
+                logger.info("✅ Twilio SMS client initialized")
+            except Exception as e:
+                logger.warning(f"⚠️ Twilio initialization failed: {e}")
+        else:
+            logger.info("📱 SMS: Running in simulation mode (set TWILIO_* env vars for real SMS)")
+        
+        # Initialize SendGrid Email client
+        self.sendgrid_client = None
+        self.sender_email = os.environ.get("SENDGRID_SENDER_EMAIL", "alerts@cipherguard.com")
+        sendgrid_key = os.environ.get("SENDGRID_API_KEY")
+        
+        if SENDGRID_AVAILABLE and sendgrid_key:
+            try:
+                self.sendgrid_client = SendGridAPIClient(sendgrid_key)
+                logger.info("✅ SendGrid Email client initialized")
+            except Exception as e:
+                logger.warning(f"⚠️ SendGrid initialization failed: {e}")
+        else:
+            logger.info("📧 Email: Running in simulation mode (set SENDGRID_API_KEY for real email)")
+        
         logger.info("Alert Service initialized")
     
     def _load_templates(self) -> Dict[str, Dict[str, str]]:
@@ -260,8 +306,8 @@ CipherGuard Security Team
     
     def _send_sms(self, phone: Optional[str], alert_type: AlertType, data: Dict) -> Dict:
         """
-        Send SMS notification.
-        In production: Integrate with Twilio, AWS SNS, or similar.
+        Send SMS notification via Twilio.
+        Falls back to simulation if Twilio is not configured.
         """
         if not phone:
             return {"status": "skipped", "reason": "No phone number"}
@@ -269,23 +315,50 @@ CipherGuard Security Team
         template = self.alert_templates.get(alert_type, {}).get("sms", "")
         message = template.format(**data)
         
-        # Simulate SMS sending
-        logger.info(f"📱 SMS to {phone}: {message[:50]}...")
+        # Real SMS via Twilio
+        if self.twilio_client and self.twilio_phone:
+            try:
+                sms = self.twilio_client.messages.create(
+                    body=message,
+                    from_=self.twilio_phone,
+                    to=phone
+                )
+                logger.info(f"📱 REAL SMS sent to {phone}: {sms.sid}")
+                return {
+                    "status": "sent",
+                    "channel": "sms",
+                    "recipient": phone,
+                    "message_preview": message[:100] + "...",
+                    "timestamp": datetime.now().isoformat(),
+                    "mode": "REAL",
+                    "provider_response": {"message_id": sms.sid, "status": sms.status}
+                }
+            except Exception as e:
+                logger.error(f"❌ Twilio SMS failed: {e}")
+                return {
+                    "status": "failed",
+                    "channel": "sms",
+                    "recipient": phone,
+                    "error": str(e),
+                    "timestamp": datetime.now().isoformat()
+                }
         
+        # Simulation mode
+        logger.info(f"📱 SIMULATED SMS to {phone}: {message[:50]}...")
         return {
             "status": "sent",
             "channel": "sms",
             "recipient": phone,
             "message_preview": message[:100] + "...",
             "timestamp": datetime.now().isoformat(),
-            # In production, this would be the SMS provider's response
-            "provider_response": {"message_id": f"sms_{int(time.time())}", "status": "delivered"}
+            "mode": "SIMULATED",
+            "provider_response": {"message_id": f"sim_sms_{int(time.time())}", "status": "delivered"}
         }
     
     def _send_email(self, email: Optional[str], alert_type: AlertType, data: Dict) -> Dict:
         """
-        Send Email notification.
-        In production: Integrate with SendGrid, AWS SES, or similar.
+        Send Email notification via SendGrid.
+        Falls back to simulation if SendGrid is not configured.
         """
         if not email:
             return {"status": "skipped", "reason": "No email address"}
@@ -294,9 +367,45 @@ CipherGuard Security Team
         subject = templates.get("email_subject", "Security Alert").format(**data)
         body = templates.get("email_body", "").format(**data)
         
-        # Simulate email sending
-        logger.info(f"📧 Email to {email}: {subject}")
+        # Real Email via SendGrid
+        if self.sendgrid_client:
+            try:
+                message = Mail(
+                    from_email=Email(self.sender_email, "CipherGuard Security"),
+                    to_emails=To(email),
+                    subject=subject,
+                    plain_text_content=Content("text/plain", body),
+                    html_content=Content("text/html", self._convert_to_html(body, subject, data))
+                )
+                
+                response = self.sendgrid_client.send(message)
+                logger.info(f"📧 REAL Email sent to {email}: {response.status_code}")
+                
+                return {
+                    "status": "sent",
+                    "channel": "email",
+                    "recipient": email,
+                    "subject": subject,
+                    "body_preview": body[:200] + "...",
+                    "timestamp": datetime.now().isoformat(),
+                    "mode": "REAL",
+                    "provider_response": {
+                        "status_code": response.status_code,
+                        "message_id": response.headers.get("X-Message-Id", "N/A")
+                    }
+                }
+            except Exception as e:
+                logger.error(f"❌ SendGrid Email failed: {e}")
+                return {
+                    "status": "failed",
+                    "channel": "email",
+                    "recipient": email,
+                    "error": str(e),
+                    "timestamp": datetime.now().isoformat()
+                }
         
+        # Simulation mode
+        logger.info(f"📧 SIMULATED Email to {email}: {subject}")
         return {
             "status": "sent",
             "channel": "email",
@@ -304,9 +413,50 @@ CipherGuard Security Team
             "subject": subject,
             "body_preview": body[:200] + "...",
             "timestamp": datetime.now().isoformat(),
-            # In production, this would be the email provider's response
-            "provider_response": {"message_id": f"email_{int(time.time())}", "status": "delivered"}
+            "mode": "SIMULATED",
+            "provider_response": {"message_id": f"sim_email_{int(time.time())}", "status": "delivered"}
         }
+    
+    def _convert_to_html(self, body: str, subject: str, data: Dict) -> str:
+        """Convert plain text email to HTML format."""
+        html_body = body.replace("\n", "<br>")
+        
+        return f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+        .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+        .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; text-align: center; border-radius: 10px 10px 0 0; }}
+        .content {{ background: #f9f9f9; padding: 30px; border: 1px solid #ddd; }}
+        .alert-box {{ background: #fff3cd; border: 1px solid #ffc107; padding: 15px; border-radius: 5px; margin: 15px 0; }}
+        .danger-box {{ background: #f8d7da; border: 1px solid #dc3545; padding: 15px; border-radius: 5px; margin: 15px 0; }}
+        .button {{ display: inline-block; background: #dc3545; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; margin: 10px 0; }}
+        .footer {{ background: #333; color: white; padding: 20px; text-align: center; font-size: 12px; border-radius: 0 0 10px 10px; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🛡️ CipherGuard Security Alert</h1>
+        </div>
+        <div class="content">
+            <div class="danger-box">
+                <strong>⚠️ {subject}</strong>
+            </div>
+            {html_body}
+            <p><a href="{data.get('block_link', '#')}" class="button">🚫 Block This Transaction</a></p>
+        </div>
+        <div class="footer">
+            <p>This is an automated security alert from CipherGuard Fraud Detection System.</p>
+            <p>📞 24/7 Fraud Hotline: 1-800-SECURE | 📧 security@cipherguard.com</p>
+        </div>
+    </div>
+</body>
+</html>
+"""
     
     def _send_push(self, device_token: Optional[str], alert_type: AlertType, data: Dict) -> Dict:
         """

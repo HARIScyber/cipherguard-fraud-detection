@@ -34,6 +34,10 @@ python-dotenv==1.0.0
 httpx==0.25.2
 requests==2.31.0
 
+# Real-time Alert Services
+twilio==8.10.0
+sendgrid==6.11.0
+
 # Development and testing
 pytest==7.4.3
 pytest-asyncio==0.21.1
