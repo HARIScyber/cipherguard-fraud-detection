@@ -63,14 +63,18 @@ class AlertService:
         # Initialize Twilio SMS client
         self.twilio_client = None
         self.twilio_phone = None
+        self.twilio_messaging_service_sid = None
         twilio_sid = os.environ.get("TWILIO_ACCOUNT_SID")
         twilio_token = os.environ.get("TWILIO_AUTH_TOKEN")
         self.twilio_phone = os.environ.get("TWILIO_PHONE_NUMBER")
+        self.twilio_messaging_service_sid = os.environ.get("TWILIO_MESSAGING_SERVICE_SID")
         
-        if TWILIO_AVAILABLE and twilio_sid and twilio_token:
+        if TWILIO_AVAILABLE and twilio_sid and twilio_token and twilio_token != "YOUR_AUTH_TOKEN_HERE":
             try:
                 self.twilio_client = TwilioClient(twilio_sid, twilio_token)
                 logger.info("✅ Twilio SMS client initialized")
+                if self.twilio_messaging_service_sid:
+                    logger.info(f"✅ Using Messaging Service: {self.twilio_messaging_service_sid}")
             except Exception as e:
                 logger.warning(f"⚠️ Twilio initialization failed: {e}")
         else:
@@ -312,17 +316,29 @@ CipherGuard Security Team
         if not phone:
             return {"status": "skipped", "reason": "No phone number"}
         
+        # Ensure phone has country code
+        if not phone.startswith('+'):
+            phone = '+91' + phone.lstrip('0')  # Default to India if no country code
+        
         template = self.alert_templates.get(alert_type, {}).get("sms", "")
         message = template.format(**data)
         
-        # Real SMS via Twilio
-        if self.twilio_client and self.twilio_phone:
+        # Real SMS via Twilio (using MessagingServiceSid or Phone Number)
+        if self.twilio_client and (self.twilio_messaging_service_sid or self.twilio_phone):
             try:
-                sms = self.twilio_client.messages.create(
-                    body=message,
-                    from_=self.twilio_phone,
-                    to=phone
-                )
+                # Use MessagingServiceSid if available (recommended by Twilio)
+                if self.twilio_messaging_service_sid:
+                    sms = self.twilio_client.messages.create(
+                        body=message,
+                        messaging_service_sid=self.twilio_messaging_service_sid,
+                        to=phone
+                    )
+                else:
+                    sms = self.twilio_client.messages.create(
+                        body=message,
+                        from_=self.twilio_phone,
+                        to=phone
+                    )
                 logger.info(f"📱 REAL SMS sent to {phone}: {sms.sid}")
                 return {
                     "status": "sent",
